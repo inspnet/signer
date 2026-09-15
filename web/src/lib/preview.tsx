@@ -166,7 +166,12 @@ export function blockLabel(block: Block): string {
   if (block.type === "field") return fieldLabel(block.field);
   if (block.type === "text") return "Text";
   if (block.type === "image") return block.alt || "Image";
-  return block.type;
+  if (block.type === "spacer") return "Space";
+  if (block.type === "divider") return "Rule";
+  if (block.type === "row") return "Columns";
+  if (block.type === "banner") return "Banner";
+  if (block.type === "social") return "Social";
+  return "Block";
 }
 
 export function flattenBlocks(blocks: Block[], depth = 0): Array<{ block: Block; depth: number }> {

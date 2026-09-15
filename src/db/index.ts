@@ -319,14 +319,10 @@ function migrate(d: Database.Database): void {
 function ensureSuperAdminDirectoryUser(): void {
   if (!config.superAdminEmail) return;
   if (getUserByEmail(config.superAdminEmail)) return;
-  const template = getUserByEmail("scott@inspired.co") ?? emptyUser(config.superAdminEmail);
+  const template = emptyUser(config.superAdminEmail);
   template.id = "u-superadmin";
-  template.email = config.superAdminEmail;
-  template.displayName = template.displayName || "Super Admin";
+  template.displayName = "Super Admin";
   template.source = "manual";
-  template.domain = config.superAdminEmail.includes("@")
-    ? config.superAdminEmail.split("@")[1]!.toLowerCase()
-    : "";
   upsertDirectoryUser(template, false);
 }
 

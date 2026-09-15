@@ -170,7 +170,7 @@ export function DesignerPage() {
           >
             {users.map((u) => (
               <option key={u.email} value={u.email} className="text-ink">
-                {u.displayName || u.email}
+                    {u.displayName || u.email} ({u.email})
               </option>
             ))}
           </select>
@@ -254,7 +254,7 @@ export function DesignerPage() {
         <aside className="w-[300px] shrink-0 border-l border-line overflow-auto bg-card flex flex-col">
           <div className="p-4 border-b border-line">
             <p className="text-[11px] uppercase tracking-[0.14em] text-stone-500 mb-2">Layers</p>
-            <div className="space-y-0.5 max-h-44 overflow-auto">
+            <div className="space-y-0.5">
               {flattenBlocks(sig.design.blocks).map(({ block, depth }) => (
                 <button
                   key={block.id}
