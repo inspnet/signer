@@ -18,11 +18,13 @@ az vm create \
   --admin-username azureuser \
   --generate-ssh-keys
 
-az vm open-port --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --port 3000 --priority 1100
-az vm open-port --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --port 25 --priority 1101
-az vm open-port --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --port 587 --priority 1102
-az vm open-port --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --port 443 --priority 1103
+az vm open-port --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --port 80 --priority 1100
+az vm open-port --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --port 443 --priority 1101
+az vm open-port --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --port 25 --priority 1102
+az vm open-port --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --port 587 --priority 1103
+az vm open-port --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" --port 3000 --priority 1104
 
-echo "SSH in, install docker, copy this repo, copy .env, then: docker compose up -d"
-echo "Point PUBLIC_URL at http(s)://<public-ip>:3000 (put Caddy/nginx in front for TLS)."
-echo "If outbound TCP 25 is blocked (common on Azure), open a support request for an SMTP exemption, or set Exchange send connector to host:587 and UPSTREAM_PORT accordingly."
+IP=$(az vm show -d -g "$RESOURCE_GROUP" -n "$VM_NAME" --query publicIps -o tsv)
+echo "VM public IP: $IP"
+echo "Create a DNS A record for signer.example.com → $IP, then follow README.md (Azure) for Docker, Caddy, .env, and mail connectors."
+echo "If outbound TCP 25 is blocked (common on Azure), open a support request for an SMTP exemption so signed mail can return to mail.protection.outlook.com."

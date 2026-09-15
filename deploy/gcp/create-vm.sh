@@ -7,7 +7,7 @@ set -euo pipefail
 : "${NAME:=signer}"
 
 gcloud config set project "$PROJECT"
-gcloud compute firewall-rules create signer-mail --allow tcp:25,tcp:587,tcp:2525,tcp:3000,tcp:443 --target-tags=signer || true
+gcloud compute firewall-rules create signer-mail --allow tcp:22,tcp:25,tcp:80,tcp:443,tcp:587,tcp:2525,tcp:3000 --target-tags=signer || true
 gcloud compute instances create "$NAME" \
   --zone "$ZONE" \
   --machine-type e2-small \
@@ -22,5 +22,5 @@ systemctl enable --now docker
 '
 
 echo "SSH: gcloud compute ssh $NAME --zone $ZONE"
-echo "Then clone the repo, create .env, docker compose up -d"
-echo "GCP also blocks outbound port 25 by default. Use 587 to Google smtp-relay.gmail.com, and request SMTP if you must hit Microsoft MX on 25."
+echo "Then follow README.md (Google Cloud): clone, .env, Caddy, docker compose up -d"
+echo "GCP blocks outbound port 25 by default. Return mail via smtp-relay.gmail.com:587. Request SMTP only if you must hit Microsoft MX on 25."
