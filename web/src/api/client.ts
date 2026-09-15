@@ -146,6 +146,22 @@ export const api = {
   folders: () => request<Array<{ id: string; name: string }>>("/api/folders"),
   createFolder: (name: string) => request("/api/folders", { method: "POST", body: JSON.stringify({ name }) }),
   tester: (body: { from: string; to: string; subject?: string; body?: string }) => request("/api/tester", { method: "POST", body: JSON.stringify(body) }),
+  upload: async (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const res = await fetch("/api/uploads", { method: "POST", credentials: "include", body });
+    if (!res.ok) {
+      let message = res.statusText;
+      try {
+        const data = (await res.json()) as { error?: string };
+        if (data.error) message = data.error;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(message);
+    }
+    return (await res.json()) as { url: string };
+  },
   users: () => request<DirectoryPerson[]>("/api/users"),
   groups: () => request<Array<{ id: string; name: string; email: string }>>("/api/groups"),
   sync: () => request("/api/directory/sync", { method: "POST", body: "{}" }),

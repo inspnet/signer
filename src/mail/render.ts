@@ -1,4 +1,5 @@
 import type { DirectoryUser } from "../directory/fields.js";
+import { hostedAssetUrl } from "./assets.js";
 import type { Block, Design, TextStyle } from "./design.js";
 
 const DEFAULT_STYLE: Required<TextStyle> = {
@@ -70,13 +71,13 @@ function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): str
       return `<p style="${styleAttr(block.style)}">${wrapLink(text, href)}</p>`;
     }
     case "image": {
-      const src = interpolate(block.src, user).trim();
+      const src = hostedAssetUrl(interpolate(block.src, user).trim());
       if (!src) return "";
       const img = `<img src="${escapeHtml(src)}" width="${block.width ?? 120}" alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;outline:none;text-decoration:none;" />`;
       return block.href ? `<a href="${escapeHtml(block.href)}">${img}</a>` : img;
     }
     case "banner": {
-      const src = interpolate(block.src, user).trim();
+      const src = hostedAssetUrl(interpolate(block.src, user).trim());
       if (!src) return "";
       const img = `<img src="${escapeHtml(src)}" width="${block.width ?? 460}" alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;max-width:100%;" />`;
       return block.href ? `<a href="${escapeHtml(block.href)}">${img}</a>` : img;
@@ -112,7 +113,7 @@ function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): str
         .map((col) => {
           const inner = col.blocks.map((b) => renderBlock(b, user, hideEmpty)).filter(Boolean).join("");
           if (hideEmpty && !inner) return "";
-          return `<td valign="top" width="${escapeHtml(col.width)}" style="padding-right:12px;">${inner}</td>`;
+          return `<td valign="top" width="${escapeHtml(col.width)}" style="width:${escapeHtml(col.width)};padding-right:12px;">${inner}</td>`;
         })
         .filter(Boolean);
       if (!cols.length) return "";

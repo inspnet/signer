@@ -135,6 +135,18 @@ describe("design renderer", () => {
     expect(html).toContain("Marketing Director");
     expect(html).not.toContain("{{");
   });
+
+  it("rewrites hosted uploads to the public URL", () => {
+    const html = renderDesign(
+      {
+        width: 400,
+        blocks: [{ id: "i", type: "image", src: "/uploads/logo.png", width: 80, alt: "Logo" }]
+      },
+      emptyUser("a@b.com"),
+      false
+    );
+    expect(html).toContain("http://localhost:3000/uploads/logo.png");
+  });
 });
 
 describe("end-to-end processing", () => {

@@ -414,8 +414,12 @@ export function registerApi(app: FastifyInstance): void {
     const file = await req.file();
     if (!file) return reply.code(400).send({ error: "No file" });
     const buffer = await file.toBuffer();
-    const url = saveUpload(file.filename, buffer);
-    return { url };
+    try {
+      const url = saveUpload(file.filename, buffer);
+      return { url };
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : "Upload failed" });
+    }
   });
 
   void canManage;

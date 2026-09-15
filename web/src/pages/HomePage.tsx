@@ -35,7 +35,7 @@ export function HomePage() {
           Open templates
         </Link>
         <Link to="/settings" className="btn btn-ghost">
-          Connect mail flow
+          Open settings
         </Link>
       </div>
       <h2 className="mt-12 text-lg font-semibold">Recent processing</h2>

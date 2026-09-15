@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowDown,
   ArrowUp,
+  Columns2,
   Copy,
   Image as ImageIcon,
   Minus,
@@ -15,15 +16,19 @@ import { api, type Block, type DirectoryPerson, type Signature } from "../api/cl
 import { DIRECTORY_FIELDS } from "../lib/fields";
 import {
   LiveBlock,
+  addColumnToRow,
   blockLabel,
   duplicateBlock,
   findBlock,
   flattenBlocks,
   insertAfter,
+  insertIntoColumn,
   moveBlock,
   mutateDesign,
   removeBlock,
+  removeColumnFromRow,
   replaceBlock,
+  wrapInColumns,
   type PreviewUser
 } from "../lib/preview";
 
@@ -64,6 +69,14 @@ const chips: Array<{ label: string; icon: ComponentType<{ size?: number; classNa
       iconSize: 18
     })
   },
+  { label: "Columns", icon: Columns2, make: () => ({
+    id: nid(),
+    type: "row",
+    columns: [
+      { width: "50%", blocks: [] },
+      { width: "50%", blocks: [] }
+    ]
+  }) },
   { label: "Rule", icon: Minus, make: () => ({ id: nid(), type: "divider", color: "#0f766e", height: 2 }) },
   { label: "Space", icon: Minus, make: () => ({ id: nid(), type: "spacer", height: 10 }) }
 ];
@@ -74,6 +87,7 @@ export function DesignerPage() {
   const [sig, setSig] = useState<Signature | null>(null);
   const [saved, setSaved] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedColumn, setSelectedColumn] = useState<{ rowId: string; index: number } | null>(null);
   const [users, setUsers] = useState<DirectoryPerson[]>([]);
   const [previewEmail, setPreviewEmail] = useState("");
   const [saving, setSaving] = useState(false);
@@ -106,8 +120,12 @@ export function DesignerPage() {
         e.preventDefault();
         patch((s) => ({ ...s, design: mutateDesign(s.design, (b) => removeBlock(b, selected)) }));
         setSelected(null);
+        setSelectedColumn(null);
       }
-      if (e.key === "Escape") setSelected(null);
+      if (e.key === "Escape") {
+        setSelected(null);
+        setSelectedColumn(null);
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -131,7 +149,18 @@ export function DesignerPage() {
   const current = sig;
 
   function add(block: Block) {
-    patch((s) => ({ ...s, design: mutateDesign(s.design, (blocks) => insertAfter(blocks, selected, block)) }));
+    patch((s) => ({
+      ...s,
+      design: mutateDesign(s.design, (blocks) => {
+        if (block.type === "row") {
+          const after = selectedBlock?.type === "row" ? selectedBlock.id : selectedColumn?.rowId ?? selected;
+          return insertAfter(blocks, after ?? null, block);
+        }
+        if (selectedColumn) return insertIntoColumn(blocks, selectedColumn.rowId, selectedColumn.index, block);
+        if (selectedBlock?.type === "row") return insertIntoColumn(blocks, selectedBlock.id, 0, block);
+        return insertAfter(blocks, selected, block);
+      })
+    }));
     setSelected(block.id);
   }
 
@@ -216,7 +245,7 @@ export function DesignerPage() {
       </div>
 
       <div className="flex flex-1 min-h-0">
-        <section className="flex-1 overflow-auto p-8" onClick={() => setSelected(null)}>
+        <section className="flex-1 overflow-auto p-8" onClick={() => { setSelected(null); setSelectedColumn(null); }}>
           <div className="max-w-[680px] mx-auto">
             <div className="letter" onClick={(e) => e.stopPropagation()}>
               <div className="bg-[#f7f4ee] px-7 py-4 border-b border-line text-[13px] space-y-1.5">
@@ -239,7 +268,21 @@ export function DesignerPage() {
                 <p className="text-[15px] text-stone-600 mb-8 leading-7">Hello — thanks for the note. See you Thursday.</p>
                 <div className="space-y-1 border-l-2 border-accent/30 pl-4">
                   {sig.design.blocks.map((b) => (
-                    <LiveBlock key={b.id} block={b} user={user} selected={selected} onSelect={setSelected} />
+                    <LiveBlock
+                      key={b.id}
+                      block={b}
+                      user={user}
+                      selected={selected}
+                      onSelect={(id) => {
+                        setSelected(id);
+                        setSelectedColumn(null);
+                      }}
+                      selectedColumn={selectedColumn}
+                      onSelectColumn={(rowId, index) => {
+                        setSelected(rowId);
+                        setSelectedColumn({ rowId, index });
+                      }}
+                    />
                   ))}
                   {sig.design.blocks.length === 0 && (
                     <p className="text-stone-400 text-sm">Use Insert above. Click a line to style it.</p>
@@ -289,6 +332,7 @@ export function DesignerPage() {
                     onClick={() => {
                       patch((s) => ({ ...s, design: mutateDesign(s.design, (b) => removeBlock(b, selectedBlock.id)) }));
                       setSelected(null);
+                    setSelectedColumn(null);
                     }}
                   >
                     <Trash2 size={14} />
@@ -297,6 +341,9 @@ export function DesignerPage() {
                 <Inspector
                   block={selectedBlock}
                   onChange={(next) => patch((s) => ({ ...s, design: mutateDesign(s.design, (b) => replaceBlock(b, next)) }))}
+                  onPatchDesign={(fn) => patch((s) => ({ ...s, design: mutateDesign(s.design, fn) }))}
+                  selectedColumn={selectedColumn}
+                  onSelectColumn={setSelectedColumn}
                 />
               </>
             )}
@@ -307,7 +354,19 @@ export function DesignerPage() {
   );
 }
 
-function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => void }) {
+function Inspector({
+  block,
+  onChange,
+  onPatchDesign,
+  selectedColumn,
+  onSelectColumn
+}: {
+  block: Block;
+  onChange: (b: Block) => void;
+  onPatchDesign: (fn: (blocks: Block[]) => Block[]) => void;
+  selectedColumn: { rowId: string; index: number } | null;
+  onSelectColumn: (slot: { rowId: string; index: number } | null) => void;
+}) {
   return (
     <div className="space-y-3 text-sm">
       <div className="font-medium capitalize">{blockLabel(block)}</div>
@@ -397,8 +456,9 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
       )}
       {(block.type === "image" || block.type === "banner") && (
         <>
+          <ImageUpload src={block.src} onSrc={(src) => onChange({ ...block, src })} />
           <label className="block">
-            Image URL
+            Or image URL
             <input className="input mt-1" value={block.src} onChange={(e) => onChange({ ...block, src: e.target.value })} placeholder="https://… or {{photoUrl}}" />
           </label>
           <label className="block">
@@ -476,21 +536,79 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
       )}
       {block.type === "row" && (
         <div className="space-y-2">
+          <p className="text-xs text-stone-500">Click a column on the canvas, then Insert to put a field in that column.</p>
           {block.columns.map((col, i) => (
-            <label key={i} className="block">
-              Column {i + 1} width
-              <input
-                className="input mt-1"
-                value={col.width}
-                onChange={(e) => {
-                  const columns = block.columns.map((c, idx) => (idx === i ? { ...c, width: e.target.value } : c));
-                  onChange({ ...block, columns });
-                }}
-              />
-            </label>
+            <div key={i} className={`rounded-md border p-2 ${selectedColumn?.rowId === block.id && selectedColumn.index === i ? "border-accent" : "border-line"}`}>
+              <button type="button" className="text-sm font-medium" onClick={() => onSelectColumn({ rowId: block.id, index: i })}>
+                Column {i + 1}
+              </button>
+              <label className="block mt-1 text-xs">
+                Width
+                <input
+                  className="input mt-1"
+                  value={col.width}
+                  onChange={(e) => {
+                    const columns = block.columns.map((c, idx) => (idx === i ? { ...c, width: e.target.value } : c));
+                    onChange({ ...block, columns });
+                  }}
+                />
+              </label>
+              {block.columns.length > 1 && (
+                <button
+                  type="button"
+                  className="text-xs text-rose-700 mt-1"
+                  onClick={() => {
+                    onPatchDesign((blocks) => removeColumnFromRow(blocks, block.id, i));
+                    onSelectColumn(null);
+                  }}
+                >
+                  Remove column
+                </button>
+              )}
+            </div>
           ))}
+          <button type="button" className="btn btn-ghost w-full" onClick={() => onPatchDesign((blocks) => addColumnToRow(blocks, block.id))}>
+            Add column
+          </button>
         </div>
       )}
+      {block.type !== "row" && (
+        <button type="button" className="btn btn-ghost w-full" onClick={() => onPatchDesign((blocks) => wrapInColumns(blocks, block.id))}>
+          Place in columns
+        </button>
+      )}
     </div>
+  );
+}
+
+function ImageUpload({ src, onSrc }: { src: string; onSrc: (src: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <label className="block">
+      Upload from computer
+      <input
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+        className="mt-1 block w-full text-xs"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          setBusy(true);
+          setError("");
+          void api
+            .upload(file)
+            .then(({ url }) => onSrc(url))
+            .catch((err) => setError(err instanceof Error ? err.message : "Upload failed"))
+            .finally(() => {
+              setBusy(false);
+              e.target.value = "";
+            });
+        }}
+      />
+      {busy && <span className="block text-xs text-stone-500 mt-1">Uploading…</span>}
+      {error && <span className="block text-xs text-rose-700 mt-1">{error}</span>}
+      {src.startsWith("/uploads/") && <img src={src} alt="" className="mt-2 max-h-20 rounded-md border border-line" />}
+    </label>
   );
 }

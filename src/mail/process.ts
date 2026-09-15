@@ -17,6 +17,7 @@ import type { Design } from "./design.js";
 import { insertHtml, insertText, isReplyMessage, latestBodyText } from "./insert.js";
 import { renderDesign, renderPlainText } from "./render.js";
 import { evaluateRules, type RuleContext } from "./rules.js";
+import { embedLocalImages } from "./assets.js";
 import { defaultProfessionalDesign } from "./templates.js";
 
 export type ProcessResult = {
@@ -307,6 +308,7 @@ async function composeRfc822(parsed: ParsedMail, html: string, text: string): Pr
     }
   }
   extraHeaders.push({ key: config.processedHeader, value: "true" });
+  const embedded = embedLocalImages(html || "");
   const composer = new MailComposer({
     from: addressText(parsed.from),
     to: addressText(parsed.to),
@@ -314,14 +316,17 @@ async function composeRfc822(parsed: ParsedMail, html: string, text: string): Pr
     bcc: addressText(parsed.bcc),
     subject: parsed.subject,
     text,
-    html: html || undefined,
-    attachments: (parsed.attachments || []).map((a) => ({
-      filename: a.filename,
-      content: a.content,
-      contentType: a.contentType,
-      cid: a.cid,
-      contentDisposition: a.contentDisposition === "inline" ? "inline" : "attachment"
-    })),
+    html: embedded.html || undefined,
+    attachments: [
+      ...embedded.attachments,
+      ...(parsed.attachments || []).map((a) => ({
+        filename: a.filename,
+        content: a.content,
+        contentType: a.contentType,
+        cid: a.cid,
+        contentDisposition: (a.contentDisposition === "inline" ? "inline" : "attachment") as "inline" | "attachment"
+      }))
+    ],
     headers: extraHeaders,
     inReplyTo: parsed.inReplyTo,
     references: parsed.references,

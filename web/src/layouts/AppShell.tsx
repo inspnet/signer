@@ -22,7 +22,7 @@ const nav = [
   { to: "/tester", label: "Rule tester", icon: Sparkles, end: false },
   { to: "/analytics", label: "Activity", icon: BarChart3, end: false },
   { to: "/me", label: "My details", icon: UserRound, end: false },
-  { to: "/settings", label: "Mail flow", icon: Settings, end: false }
+  { to: "/settings", label: "Settings", icon: Settings, end: false }
 ];
 
 export function AppShell() {

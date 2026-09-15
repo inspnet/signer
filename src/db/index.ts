@@ -973,7 +973,10 @@ export function mailStats(): {
 }
 
 export function saveUpload(filename: string, buffer: Buffer): string {
-  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const ext = path.extname(filename).toLowerCase();
+  const allowed = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
+  if (!allowed.has(ext)) throw new Error("Upload a PNG, JPEG, GIF, WebP, or SVG image");
+  const safe = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, "_");
   const stored = `${Date.now()}_${safe}`;
   const dest = path.join(config.dataDir, "uploads", stored);
   fs.writeFileSync(dest, buffer);

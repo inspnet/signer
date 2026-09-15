@@ -6,7 +6,7 @@ export function SettingsPage() {
   const [tab, setTab] = useState<"flow" | "directory" | "fields" | "admins">("flow");
   return (
     <div>
-      <PageHeader kicker="Admin" title="Mail flow" description="Connectors, directory cache, and who may edit their own card." />
+      <PageHeader kicker="Admin" title="Settings" description="Connectors, directory cache, and who may edit their own card." />
       <div className="tabs">
         {(["flow", "directory", "fields", "admins"] as const).map((t) => (
           <button key={t} className={`tab capitalize ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>

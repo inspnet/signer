@@ -47,12 +47,16 @@ export function LiveBlock({
   block,
   user,
   selected,
-  onSelect
+  onSelect,
+  selectedColumn,
+  onSelectColumn
 }: {
   block: Block;
   user: PreviewUser;
   selected: string | null;
   onSelect: (id: string) => void;
+  selectedColumn?: { rowId: string; index: number } | null;
+  onSelectColumn?: (rowId: string, index: number) => void;
 }) {
   const active = selected === block.id;
   return (
@@ -68,7 +72,14 @@ export function LiveBlock({
           {blockLabel(block)}
         </span>
       )}
-      <BlockBody block={block} user={user} selected={selected} onSelect={onSelect} />
+      <BlockBody
+        block={block}
+        user={user}
+        selected={selected}
+        onSelect={onSelect}
+        selectedColumn={selectedColumn}
+        onSelectColumn={onSelectColumn}
+      />
     </div>
   );
 }
@@ -77,12 +88,16 @@ function BlockBody({
   block,
   user,
   selected,
-  onSelect
+  onSelect,
+  selectedColumn,
+  onSelectColumn
 }: {
   block: Block;
   user: PreviewUser;
   selected: string | null;
   onSelect: (id: string) => void;
+  selectedColumn?: { rowId: string; index: number } | null;
+  onSelectColumn?: (rowId: string, index: number) => void;
 }) {
   switch (block.type) {
     case "text":
@@ -112,7 +127,7 @@ function BlockBody({
       }
       return (
         <div className="border border-dashed border-line text-stone-400 text-xs px-4 py-5 text-center rounded-md bg-mist/40">
-          Paste a logo URL in the inspector
+          Upload a logo in the inspector
         </div>
       );
     }
@@ -122,7 +137,7 @@ function BlockBody({
         <img src={src} width={block.width ?? 460} alt={block.alt || ""} />
       ) : (
         <div className="border border-dashed border-line text-stone-400 text-xs px-4 py-8 text-center rounded-md bg-mist/40">
-          Banner image URL
+          Upload a banner in the inspector
         </div>
       );
     }
@@ -147,14 +162,36 @@ function BlockBody({
       );
     case "row":
       return (
-        <div className="flex gap-4 items-start">
-          {block.columns.map((col, i) => (
-            <div key={i} className="min-w-0 space-y-1" style={{ flex: col.width && /^\d+$/.test(col.width) ? Number(col.width) : 1 }}>
-              {col.blocks.map((child) => (
-                <LiveBlock key={child.id} block={child} user={user} selected={selected} onSelect={onSelect} />
-              ))}
-            </div>
-          ))}
+        <div className="flex gap-3 items-stretch">
+          {block.columns.map((col, i) => {
+            const activeCol = selectedColumn?.rowId === block.id && selectedColumn.index === i;
+            return (
+              <div
+                key={i}
+                className={`min-w-0 space-y-1 rounded-md p-2 ${activeCol ? "ring-2 ring-accent bg-teal-50/50" : "border border-dashed border-line/80"}`}
+                style={colFlex(col.width)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelect(block.id);
+                  onSelectColumn?.(block.id, i);
+                }}
+              >
+                <div className="text-[9px] uppercase tracking-wide text-stone-400">Column {i + 1}</div>
+                {col.blocks.map((child) => (
+                  <LiveBlock
+                    key={child.id}
+                    block={child}
+                    user={user}
+                    selected={selected}
+                    onSelect={onSelect}
+                    selectedColumn={selectedColumn}
+                    onSelectColumn={onSelectColumn}
+                  />
+                ))}
+                {col.blocks.length === 0 && <p className="text-xs text-stone-400 py-4 text-center">Click, then Insert</p>}
+              </div>
+            );
+          })}
         </div>
       );
     default:
@@ -262,6 +299,76 @@ export function duplicateBlock(blocks: Block[], id: string): Block[] {
     if (b.type !== "row") return b;
     return { ...b, columns: b.columns.map((c) => ({ ...c, blocks: duplicateBlock(c.blocks, id) })) };
   });
+}
+
+function colFlex(width: string): CSSProperties {
+  if (width.endsWith("%")) return { flex: `0 0 ${width}`, width };
+  if (/^\d+$/.test(width)) return { flex: Number(width), minWidth: 0 };
+  return { flex: 1, minWidth: 0 };
+}
+
+export function insertIntoColumn(blocks: Block[], rowId: string, colIndex: number, item: Block): Block[] {
+  return blocks.map((b) => {
+    if (b.id === rowId && b.type === "row") {
+      return {
+        ...b,
+        columns: b.columns.map((c, i) => (i === colIndex ? { ...c, blocks: [...c.blocks, item] } : c))
+      };
+    }
+    if (b.type === "row") {
+      return { ...b, columns: b.columns.map((c) => ({ ...c, blocks: insertIntoColumn(c.blocks, rowId, colIndex, item) })) };
+    }
+    return b;
+  });
+}
+
+export function addColumnToRow(blocks: Block[], rowId: string): Block[] {
+  return blocks.map((b) => {
+    if (b.id === rowId && b.type === "row") {
+      const n = b.columns.length + 1;
+      const width = `${Math.floor(100 / n)}%`;
+      return { ...b, columns: [...b.columns.map((c) => ({ ...c, width })), { width, blocks: [] }] };
+    }
+    if (b.type === "row") {
+      return { ...b, columns: b.columns.map((c) => ({ ...c, blocks: addColumnToRow(c.blocks, rowId) })) };
+    }
+    return b;
+  });
+}
+
+export function removeColumnFromRow(blocks: Block[], rowId: string, colIndex: number): Block[] {
+  return blocks.map((b) => {
+    if (b.id === rowId && b.type === "row") {
+      if (b.columns.length <= 1) return b;
+      const columns = b.columns.filter((_, i) => i !== colIndex);
+      const width = `${Math.floor(100 / columns.length)}%`;
+      return { ...b, columns: columns.map((c) => ({ ...c, width })) };
+    }
+    if (b.type === "row") {
+      return { ...b, columns: b.columns.map((c) => ({ ...c, blocks: removeColumnFromRow(c.blocks, rowId, colIndex) })) };
+    }
+    return b;
+  });
+}
+
+export function wrapInColumns(blocks: Block[], id: string): Block[] {
+  const idx = blocks.findIndex((b) => b.id === id);
+  if (idx !== -1) {
+    const row: Block = {
+      id: `b_${Math.random().toString(36).slice(2, 10)}`,
+      type: "row",
+      columns: [
+        { width: "40%", blocks: [] },
+        { width: "60%", blocks: [blocks[idx]!] }
+      ]
+    };
+    const next = [...blocks];
+    next.splice(idx, 1, row);
+    return next;
+  }
+  return blocks.map((b) =>
+    b.type === "row" ? { ...b, columns: b.columns.map((c) => ({ ...c, blocks: wrapInColumns(c.blocks, id) })) } : b
+  );
 }
 
 export function mutateDesign(design: Design, fn: (blocks: Block[]) => Block[]): Design {
