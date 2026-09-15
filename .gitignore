@@ -10,6 +10,7 @@ data
 .DS_Store
 coverage
 .vite
+*.tsbuildinfo
 *.log
 certs
 uploads

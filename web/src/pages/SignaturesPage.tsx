@@ -4,7 +4,9 @@ import { api, type Signature } from "../api/client";
 
 export function SignaturesPage() {
   const [items, setItems] = useState<Signature[]>([]);
-  const [tab, setTab] = useState<"all" | "reorder">("all");
+  const [tab, setTab] = useState<"all" | "order">("all");
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("New signature");
   const navigate = useNavigate();
 
   const load = () => api.signatures().then(setItems);
@@ -14,51 +16,48 @@ export function SignaturesPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-semibold text-ink">Signatures</h1>
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <p className="text-xs uppercase tracking-[0.16em] text-accent-2 font-semibold">Library</p>
+          <h1 className="display text-4xl mt-1">Signatures</h1>
+          <p className="text-stone-600 mt-2">Evaluated top to bottom. The first match is stamped on the message.</p>
+        </div>
         <div className="flex gap-2">
-          <button
-            className="rounded-full bg-navy text-white px-4 py-2 text-sm"
-            onClick={async () => {
-              const name = prompt("Signature name", "New signature");
-              if (!name) return;
-              const created = await api.createSignature(name);
-              navigate(`/signatures/${created.id}/design`);
-            }}
-          >
-            Create Signature
+          <button className="btn btn-primary" onClick={() => setCreating(true)}>
+            New template
           </button>
           <button
-            className="rounded-full border border-line bg-white px-4 py-2 text-sm"
+            className="btn btn-ghost"
             onClick={async () => {
-              const name = prompt("Folder name");
-              if (!name) return;
-              await api.createFolder(name);
+              const folder = window.prompt("Folder name");
+              if (!folder) return;
+              await api.createFolder(folder);
               await load();
             }}
           >
-            Create Folder
+            Folder
           </button>
         </div>
       </div>
-      <div className="flex gap-6 mt-6 border-b border-line text-sm">
-        <button className={`pb-3 ${tab === "all" ? "border-b-2 border-navy font-medium" : "text-slate-500"}`} onClick={() => setTab("all")}>
-          All Signatures
-        </button>
-        <button className={`pb-3 ${tab === "reorder" ? "border-b-2 border-navy font-medium" : "text-slate-500"}`} onClick={() => setTab("reorder")}>
-          Re-order
-        </button>
+      <div className="tabs">
+        {(["all", "order"] as const).map((t) => (
+          <button
+            key={t}
+            className={`tab ${tab === t ? "active" : ""}`}
+            onClick={() => setTab(t)}
+          >
+            {t === "all" ? "Templates" : "Evaluation order"}
+          </button>
+        ))}
       </div>
-      <p className="text-sm text-slate-500 mt-4">Signatures are displayed below in the order in which they are evaluated.</p>
-      {tab === "reorder" && (
-        <div className="mt-4 bg-white border border-line rounded-xl p-4">
-          <p className="text-sm text-slate-600 mb-3">Move a signature earlier so it is considered first. The first match wins.</p>
+      {tab === "order" && (
+        <div className="mt-5 panel p-4">
           {items.map((s, i) => (
             <div key={s.id} className="flex items-center gap-3 py-2 border-b border-line last:border-0">
-              <span className="w-6 text-slate-400">{i + 1}</span>
-              <span className="flex-1">{s.name}</span>
+              <span className="w-7 h-7 rounded-md bg-mist grid place-items-center text-xs">{i + 1}</span>
+              <span className="flex-1 font-medium">{s.name}</span>
               <button
-                className="text-sm"
+                className="btn btn-ghost px-2 py-1"
                 disabled={i === 0}
                 onClick={async () => {
                   const next = [...items];
@@ -70,7 +69,7 @@ export function SignaturesPage() {
                 Up
               </button>
               <button
-                className="text-sm"
+                className="btn btn-ghost px-2 py-1"
                 disabled={i === items.length - 1}
                 onClick={async () => {
                   const next = [...items];
@@ -86,41 +85,57 @@ export function SignaturesPage() {
         </div>
       )}
       {tab === "all" && (
-        <div className="mt-4 space-y-4">
+        <div className="mt-5 grid md:grid-cols-2 gap-4">
           {items.map((s) => (
-            <div key={s.id} className="bg-white border border-line rounded-xl p-5 flex gap-8">
-              <div>
-                <div className="font-medium text-lg">{s.name}</div>
-                <div className="mt-3 w-56 h-32 bg-mist rounded-lg overflow-hidden border border-line">
-                  <SignatureThumb id={s.id} />
+            <article key={s.id} className="panel overflow-hidden flex flex-col">
+              <div className="h-40 bg-[radial-gradient(#e7e0d4_1px,transparent_1px)] bg-[size:16px_16px] p-4 overflow-hidden">
+                <SignatureThumb id={s.id} />
+              </div>
+              <div className="p-4 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <h2 className="font-semibold text-lg">{s.name}</h2>
+                  <span className={`text-xs px-2 py-0.5 rounded-md ${s.enabled ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>
+                    {s.enabled ? "Live" : "Off"}
+                  </span>
                 </div>
+                <p className="text-sm text-stone-500 mt-2">
+                  {s.rules.senders.everyone ? "Everyone" : "Filtered senders"} ·{" "}
+                  {s.rules.recipients.external ? "External recipients" : s.rules.recipients.internal ? "Internal" : "Any recipient"}
+                </p>
               </div>
-              <div className="text-sm">
-                <div className="text-slate-500">Senders</div>
-                <div className="mt-1">{s.rules.senders.everyone ? "Everyone" : (s.rules.senders.emails || s.rules.senders.groups || []).join(", ") || "Filtered"}</div>
-              </div>
-              <div className="text-sm flex-1">
-                <div className="text-slate-500">Configuration</div>
-                <ul className="mt-1 space-y-1">
-                  <li>Server-Side (Microsoft 365 / Google Workspace)</li>
-                  <li>{s.rules.dateTime ? "Scheduled" : "Always Active"}</li>
-                  <li>
-                    {s.rules.recipients.external ? "External recipients" : s.rules.recipients.internal ? "Internal recipients" : "Any Recipient"}
-                  </li>
-                  <li className={s.enabled ? "text-emerald-700" : "text-amber-700"}>{s.enabled ? "Enabled" : "Disabled"}</li>
-                </ul>
-              </div>
-              <div className="flex flex-col gap-2 justify-end">
-                <Link className="rounded-full bg-navy text-white px-4 py-2 text-sm text-center" to={`/signatures/${s.id}/design`}>
-                  Edit Design
+              <div className="p-4 pt-0 flex gap-2">
+                <Link className="btn btn-primary flex-1" to={`/signatures/${s.id}/design`}>
+                  Design
                 </Link>
-                <Link className="rounded-full border border-line px-4 py-2 text-sm text-center" to={`/signatures/${s.id}/rules`}>
-                  Manage Rules
+                <Link className="btn btn-ghost flex-1" to={`/signatures/${s.id}/rules`}>
+                  Rules
                 </Link>
               </div>
-            </div>
+            </article>
           ))}
-          <p className="text-sm text-slate-500">All signatures have been loaded.</p>
+        </div>
+      )}
+      {creating && (
+        <div className="fixed inset-0 bg-ink/40 grid place-items-center p-6 z-20">
+          <form
+            className="panel p-6 w-full max-w-md space-y-4"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const created = await api.createSignature(name);
+              navigate(`/signatures/${created.id}/design`);
+            }}
+          >
+            <h2 className="display text-2xl">New template</h2>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn btn-ghost" onClick={() => setCreating(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" type="submit">
+                Create
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>
@@ -137,5 +152,5 @@ function SignatureThumb({ id }: { id: string }) {
       setHtml(preview.html);
     });
   }, [id]);
-  return <div className="origin-top-left scale-[0.55] p-3" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className="origin-top-left scale-[0.62] bg-white shadow-sm p-3 w-[520px]" dangerouslySetInnerHTML={{ __html: html }} />;
 }

@@ -25,25 +25,26 @@ export function RulesPage() {
 
   return (
     <div>
-      <Link to="/signatures" className="text-sm text-slate-500">
-        ← Signatures
+      <Link to="/signatures" className="text-sm text-stone-500 hover:text-ink">
+        ← Templates
       </Link>
-      <h1 className="text-3xl font-semibold mt-2">{sig.name} — rules</h1>
-      <div className="flex gap-4 mt-6 border-b border-line text-sm">
+      <h1 className="display text-4xl mt-2">{sig.name}</h1>
+      <p className="text-stone-600 mt-2">Who this template stamps, and when.</p>
+      <div className="tabs">
         {["overview", "senders", "exceptions", "recipients", "datetime", "advanced"].map((t) => (
-          <button key={t} className={`pb-3 capitalize ${tab === t ? "border-b-2 border-navy font-medium" : "text-slate-500"}`} onClick={() => setTab(t)}>
-            {t === "datetime" ? "Date/Time" : t}
+          <button key={t} className={`tab capitalize ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
+            {t === "datetime" ? "Schedule" : t}
           </button>
         ))}
       </div>
-      <div className="mt-6 bg-white border border-line rounded-xl p-6 max-w-3xl space-y-4">
+      <div className="mt-6 panel p-6 max-w-3xl space-y-4">
         {tab === "overview" && (
           <>
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={Boolean(sig.enabled)} onChange={(e) => setSig({ ...sig, enabled: e.target.checked ? 1 : 0 })} />
               Enabled for server-side deployment
             </label>
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-stone-600">
               Server-side signatures are applied after send via Exchange connectors or Google content compliance. Users cannot
               remove them from iOS Mail or other clients.
             </p>
@@ -89,11 +90,11 @@ export function RulesPage() {
               <>
                 <label className="block text-sm">
                   Start
-                  <input type="datetime-local" className="block border rounded p-2 mt-1" value={rules.dateTime.start || ""} onChange={(e) => patch({ dateTime: { ...rules.dateTime!, start: e.target.value } })} />
+                  <input type="datetime-local" className="input mt-1" value={rules.dateTime.start || ""} onChange={(e) => patch({ dateTime: { ...rules.dateTime!, start: e.target.value } })} />
                 </label>
                 <label className="block text-sm">
                   End
-                  <input type="datetime-local" className="block border rounded p-2 mt-1" value={rules.dateTime.end || ""} onChange={(e) => patch({ dateTime: { ...rules.dateTime!, end: e.target.value } })} />
+                  <input type="datetime-local" className="input mt-1" value={rules.dateTime.end || ""} onChange={(e) => patch({ dateTime: { ...rules.dateTime!, end: e.target.value } })} />
                 </label>
                 <div className="flex gap-2">
                   {days.map((d, i) => (
@@ -124,22 +125,22 @@ export function RulesPage() {
             </label>
             <label className="block text-sm">
               Only if subject contains
-              <input className="block border rounded p-2 mt-1 w-full" value={rules.advanced.subjectContains || ""} onChange={(e) => patch({ advanced: { ...rules.advanced, subjectContains: e.target.value } })} />
+              <input className="input mt-1" value={rules.advanced.subjectContains || ""} onChange={(e) => patch({ advanced: { ...rules.advanced, subjectContains: e.target.value } })} />
             </label>
             <label className="block text-sm">
               Do not add if the message contains (use unique text from this signature to apply once per thread)
-              <input className="block border rounded p-2 mt-1 w-full" value={rules.advanced.bodyDoesNotContain || ""} onChange={(e) => patch({ advanced: { ...rules.advanced, bodyDoesNotContain: e.target.value } })} />
+              <input className="input mt-1" value={rules.advanced.bodyDoesNotContain || ""} onChange={(e) => patch({ advanced: { ...rules.advanced, bodyDoesNotContain: e.target.value } })} />
             </label>
             <label className="block text-sm">
               Search
-              <select className="block border rounded p-2 mt-1" value={rules.advanced.bodySearch} onChange={(e) => patch({ advanced: { ...rules.advanced, bodySearch: e.target.value as "latest" | "anywhere" } })}>
+              <select className="input mt-1" value={rules.advanced.bodySearch} onChange={(e) => patch({ advanced: { ...rules.advanced, bodySearch: e.target.value as "latest" | "anywhere" } })}>
                 <option value="anywhere">Anywhere in email trail</option>
                 <option value="latest">Only in the most recent email</option>
               </select>
             </label>
             <label className="block text-sm">
               If this signature is not applied
-              <select className="block border rounded p-2 mt-1" value={rules.advanced.ifNotApplied} onChange={(e) => patch({ advanced: { ...rules.advanced, ifNotApplied: e.target.value as "stop" | "continue" } })}>
+              <select className="input mt-1" value={rules.advanced.ifNotApplied} onChange={(e) => patch({ advanced: { ...rules.advanced, ifNotApplied: e.target.value as "stop" | "continue" } })}>
                 <option value="continue">Process the next signature</option>
                 <option value="stop">Do not process the next signature</option>
               </select>
@@ -147,7 +148,7 @@ export function RulesPage() {
           </>
         )}
         <button
-          className="rounded-full bg-navy text-white px-4 py-2 text-sm"
+          className="btn btn-primary"
           onClick={async () => {
             await api.saveSignature(sig.id, { enabled: Boolean(sig.enabled), rules: sig.rules, name: sig.name });
             setSig({ ...sig });
@@ -202,7 +203,7 @@ function SenderEditor({
             {g.name}
           </label>
         ))}
-        {groups.length === 0 && <p className="text-sm text-slate-500">Sync Entra or Google groups in Settings.</p>}
+        {groups.length === 0 && <p className="text-sm text-stone-500">Sync Entra or Google groups in Settings.</p>}
       </div>
     </div>
   );
@@ -214,9 +215,9 @@ function ListField({ label, value, onChange }: { label: string; value: string[];
     <div>
       <div className="text-sm mb-1">{label}</div>
       <div className="flex gap-2">
-        <input className="border rounded p-2 flex-1" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add then press +" />
+        <input className="input flex-1" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add then press +" />
         <button
-          className="border rounded px-3"
+          className="btn btn-ghost"
           onClick={() => {
             if (!draft.trim()) return;
             onChange([...value, draft.trim()]);
@@ -228,7 +229,7 @@ function ListField({ label, value, onChange }: { label: string; value: string[];
       </div>
       <div className="flex flex-wrap gap-2 mt-2">
         {value.map((v) => (
-          <span key={v} className="bg-mist rounded-full px-3 py-1 text-xs">
+          <span key={v} className="bg-mist rounded-md px-3 py-1 text-xs">
             {v}{" "}
             <button onClick={() => onChange(value.filter((x) => x !== v))}>&times;</button>
           </span>

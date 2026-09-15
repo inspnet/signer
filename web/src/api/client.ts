@@ -1,5 +1,20 @@
 export type Role = "super_admin" | "owner" | "admin" | "editor" | "designer" | "user";
 
+export type DirectoryPerson = {
+  id: string;
+  email: string;
+  displayName: string;
+  jobTitle: string;
+  department: string;
+  telephone: string;
+  mobile: string;
+  website: string;
+  pronouns: string;
+  domain: string;
+  groupIds: string[];
+  [key: string]: string | string[] | number | undefined;
+};
+
 export type SessionUser = {
   email: string;
   name: string;
@@ -131,7 +146,7 @@ export const api = {
   folders: () => request<Array<{ id: string; name: string }>>("/api/folders"),
   createFolder: (name: string) => request("/api/folders", { method: "POST", body: JSON.stringify({ name }) }),
   tester: (body: { from: string; to: string; subject?: string; body?: string }) => request("/api/tester", { method: "POST", body: JSON.stringify(body) }),
-  users: () => request<Array<{ id: string; email: string; displayName: string; jobTitle: string; department: string; domain: string; groupIds: string[] }>>("/api/users"),
+  users: () => request<DirectoryPerson[]>("/api/users"),
   groups: () => request<Array<{ id: string; name: string; email: string }>>("/api/groups"),
   sync: () => request("/api/directory/sync", { method: "POST", body: "{}" }),
   fields: () => request<Array<{ key: string; label: string; section: string; directory: boolean; userEditable: boolean }>>("/api/fields"),

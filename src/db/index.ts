@@ -345,6 +345,8 @@ function seedDemo(d: Database.Database): void {
       department: "Marketing",
       company: "Inspired Networks",
       telephone: "604.288.7000 x119",
+      mobile: "604.555.0199",
+      pronouns: "he/him",
       website: "www.inspired.co",
       custom1: "IT Support: it@inspired.co / 604.288.7000 x1",
       custom2: "Web Support: web@inspired.co / 604.288.7000 x2",
@@ -361,14 +363,15 @@ function seedDemo(d: Database.Database): void {
       department: "Marketing",
       company: "Inspired Networks",
       telephone: "+44 (0) 123 456 7890",
+      mobile: "+44 7700 900123",
       website: "www.inspired.co",
       source: "demo",
       domain: "inspired.co"
     }
   ];
   const insert = d.prepare(`
-    INSERT INTO users (id, email, display_name, given_name, surname, job_title, department, company, telephone, website, custom1, custom2, source, domain, enabled)
-    VALUES (@id, @email, @displayName, @givenName, @surname, @jobTitle, @department, @company, @telephone, @website, @custom1, @custom2, @source, @domain, 1)
+    INSERT INTO users (id, email, display_name, given_name, surname, job_title, department, company, telephone, mobile, pronouns, website, custom1, custom2, source, domain, enabled)
+    VALUES (@id, @email, @displayName, @givenName, @surname, @jobTitle, @department, @company, @telephone, @mobile, @pronouns, @website, @custom1, @custom2, @source, @domain, 1)
   `);
   for (const u of users) {
     insert.run({
@@ -381,6 +384,8 @@ function seedDemo(d: Database.Database): void {
       department: u.department,
       company: u.company,
       telephone: u.telephone || "",
+      mobile: u.mobile || "",
+      pronouns: u.pronouns || "",
       website: u.website || "",
       custom1: u.custom1 || "",
       custom2: u.custom2 || "",

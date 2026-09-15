@@ -7,54 +7,54 @@ export function HomePage() {
   useEffect(() => {
     void api.home().then(setData);
   }, []);
-  if (!data) return <p>Loading…</p>;
+  if (!data) return <p className="text-stone-500">Loading…</p>;
   const cards = [
-    { label: "Processed (24h)", value: data.stats.processed24h },
-    { label: "Signed (24h)", value: data.stats.signed24h },
-    { label: "Signatures", value: data.signatures },
-    { label: "Directory users", value: data.users }
+    { label: "Processed, 24h", value: data.stats.processed24h },
+    { label: "Signed, 24h", value: data.stats.signed24h },
+    { label: "Templates", value: data.signatures },
+    { label: "Directory people", value: data.users }
   ];
   return (
     <div>
-      <h1 className="text-3xl font-semibold text-ink">Home</h1>
-      <p className="mt-2 text-slate-600 max-w-3xl">
-        Signer applies signatures and legal disclaimers in the mail flow after the user clicks Send. That works for Outlook,
-        Gmail, and iOS Mail — senders cannot remove the block, and mail stays in your Microsoft or Google environment plus
-        this host.
+      <p className="text-xs uppercase tracking-[0.16em] text-accent-2 font-semibold">Overview</p>
+      <h1 className="display text-4xl mt-1">Today’s mail</h1>
+      <p className="mt-3 text-stone-600 max-w-2xl leading-7">
+        Signer stamps signatures after send, inside your Exchange or Google routing. Senders cannot remove them, including
+        on iOS Mail.
       </p>
-      <div className="grid grid-cols-4 gap-4 mt-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-8">
         {cards.map((c) => (
-          <div key={c.label} className="bg-white rounded-xl border border-line p-5">
-            <div className="text-sm text-slate-500">{c.label}</div>
-            <div className="text-3xl font-semibold mt-2">{c.value}</div>
+          <div key={c.label} className="panel p-5">
+            <div className="text-sm text-stone-500">{c.label}</div>
+            <div className="display text-4xl mt-2">{c.value}</div>
           </div>
         ))}
       </div>
       <div className="mt-8 flex gap-3">
-        <Link to="/signatures" className="rounded-full bg-navy text-white px-4 py-2 text-sm">
-          Manage signatures
+        <Link to="/signatures" className="btn btn-primary">
+          Open templates
         </Link>
-        <Link to="/settings" className="rounded-full border border-line px-4 py-2 text-sm bg-white">
+        <Link to="/settings" className="btn btn-ghost">
           Connect mail flow
         </Link>
       </div>
-      <h2 className="mt-10 font-medium">Recent processing</h2>
-      <div className="mt-3 bg-white border border-line rounded-xl overflow-hidden">
+      <h2 className="mt-12 text-lg font-semibold">Recent processing</h2>
+      <div className="mt-3 panel overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-mist text-left text-slate-500">
+          <thead className="bg-mist text-left text-stone-500">
             <tr>
-              <th className="p-3">When</th>
-              <th>Sender</th>
-              <th>Subject</th>
-              <th>Status</th>
-              <th>ms</th>
+              <th className="p-3 font-medium">When</th>
+              <th className="font-medium">Sender</th>
+              <th className="font-medium">Subject</th>
+              <th className="font-medium">Status</th>
+              <th className="font-medium">ms</th>
             </tr>
           </thead>
           <tbody>
             {data.stats.recent.length === 0 && (
               <tr>
-                <td className="p-3 text-slate-500" colSpan={5}>
-                  No messages processed yet. Point Exchange or Google connectors at this host to start.
+                <td className="p-4 text-stone-500" colSpan={5}>
+                  No messages yet. Point Exchange or Google connectors at this host.
                 </td>
               </tr>
             )}

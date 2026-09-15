@@ -234,16 +234,7 @@ export function registerApi(app: FastifyInstance): void {
 
   app.get("/api/users", async (req, reply) => {
     if (!requireUser(req, reply)) return;
-    return listUsers().map((u) => ({
-      id: u.id,
-      email: u.email,
-      displayName: u.displayName,
-      jobTitle: u.jobTitle,
-      department: u.department,
-      domain: u.domain,
-      source: u.source,
-      groupIds: u.groupIds
-    }));
+    return listUsers();
   });
 
   app.get("/api/groups", async (req, reply) => {

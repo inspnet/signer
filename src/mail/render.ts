@@ -70,13 +70,15 @@ function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): str
       return `<p style="${styleAttr(block.style)}">${wrapLink(text, href)}</p>`;
     }
     case "image": {
-      if (!block.src) return "";
-      const img = `<img src="${escapeHtml(block.src)}" width="${block.width ?? 120}" alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;outline:none;text-decoration:none;" />`;
+      const src = interpolate(block.src, user).trim();
+      if (!src) return "";
+      const img = `<img src="${escapeHtml(src)}" width="${block.width ?? 120}" alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;outline:none;text-decoration:none;" />`;
       return block.href ? `<a href="${escapeHtml(block.href)}">${img}</a>` : img;
     }
     case "banner": {
-      if (!block.src) return "";
-      const img = `<img src="${escapeHtml(block.src)}" width="${block.width ?? 460}" alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;max-width:100%;" />`;
+      const src = interpolate(block.src, user).trim();
+      if (!src) return "";
+      const img = `<img src="${escapeHtml(src)}" width="${block.width ?? 460}" alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;max-width:100%;" />`;
       return block.href ? `<a href="${escapeHtml(block.href)}">${img}</a>` : img;
     }
     case "divider": {
