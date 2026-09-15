@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # GCP: e2-small (or e2-micro for labs) Compute Engine VM + Docker.
 # Cloud Run cannot accept inbound SMTP, so a tiny VM is the low-cost path.
+#
+# ZONE must offer E2 (see README "Compatible regions and zones").
+# Do not use asia-southeast3 (Bangkok, no E2), AI zones, europe-west1-a, or
+# us-east1-a (those zone letters do not exist). Outbound TCP 25 is blocked
+# project-wide; return Workspace mail on 587.
 set -euo pipefail
 : "${PROJECT:?}"
 : "${ZONE:=us-central1-a}"
