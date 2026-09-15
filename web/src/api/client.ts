@@ -70,10 +70,14 @@ export type Signature = {
 };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers || {});
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   const res = await fetch(url, {
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
-    ...init
+    ...init,
+    headers
   });
   if (!res.ok) {
     let message = res.statusText;
@@ -100,8 +104,8 @@ export const api = {
       smtpHostname: string;
     }>("/api/bootstrap"),
   me: () => request<{ user: SessionUser | null }>("/api/auth/me"),
-  devLogin: () => request<{ ok: boolean }>("/api/auth/dev-login", { method: "POST" }),
-  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  devLogin: () => request<{ ok: boolean }>("/api/auth/dev-login", { method: "POST", body: "{}" }),
+  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST", body: "{}" }),
   home: () =>
     request<{
       stats: { processed24h: number; signed24h: number; failed24h: number; recent: Array<{ receivedAt: string; sender: string; subject: string; status: string; processingMs: number }> };
@@ -129,7 +133,7 @@ export const api = {
   tester: (body: { from: string; to: string; subject?: string; body?: string }) => request("/api/tester", { method: "POST", body: JSON.stringify(body) }),
   users: () => request<Array<{ id: string; email: string; displayName: string; jobTitle: string; department: string; domain: string; groupIds: string[] }>>("/api/users"),
   groups: () => request<Array<{ id: string; name: string; email: string }>>("/api/groups"),
-  sync: () => request("/api/directory/sync", { method: "POST" }),
+  sync: () => request("/api/directory/sync", { method: "POST", body: "{}" }),
   fields: () => request<Array<{ key: string; label: string; section: string; directory: boolean; userEditable: boolean }>>("/api/fields"),
   saveFields: (editable: string[]) => request("/api/fields", { method: "PUT", body: JSON.stringify({ editable }) }),
   myDetails: () =>

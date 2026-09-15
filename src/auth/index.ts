@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { jwtVerify, SignJWT } from "jose";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import fp from "fastify-plugin";
 import * as client from "openid-client";
 import { config, entraConfigured, googleLoginConfigured } from "../config.js";
 import { resolveRole, type SessionUser } from "../db/index.js";
@@ -49,13 +50,13 @@ export async function setSession(reply: FastifyReply, user: SessionUser): Promis
   });
 }
 
-export async function authPlugin(app: FastifyInstance): Promise<void> {
+export const authPlugin = fp(async function authPlugin(app: FastifyInstance): Promise<void> {
   app.decorateRequest("user", null);
   app.addHook("preHandler", async (req) => {
     req.user = await readSession(req.cookies[cookieName]);
     if (req.user) req.user.role = resolveRole(req.user.email);
   });
-}
+});
 
 export function requireUser(req: FastifyRequest, reply: FastifyReply): SessionUser | null {
   if (!req.user) {

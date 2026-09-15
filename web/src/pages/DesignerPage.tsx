@@ -60,10 +60,11 @@ export function DesignerPage() {
   }
 
   return (
-    <div className="-m-8 min-h-[calc(100vh-56px)] flex flex-col bg-white">
+    <div className="min-h-full flex flex-col bg-white">
+      <header className="h-12 bg-navy text-white flex items-center px-4 text-sm font-semibold">Signer</header>
       <div className="h-14 border-b border-line flex items-center px-4 gap-3">
         <Link to="/signatures" className="text-slate-500 text-sm">
-          ←
+          ← Signatures
         </Link>
         <input
           className="font-medium outline-none flex-1"

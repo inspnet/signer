@@ -129,6 +129,7 @@ export function initDb(): Database.Database {
   db.pragma("foreign_keys = ON");
   migrate(db);
   if (config.demoMode) seedDemo(db);
+  ensureSuperAdminDirectoryUser();
   return db;
 }
 
@@ -313,6 +314,20 @@ function migrate(d: Database.Database): void {
       insertField.run(field.key, defaultEditable.has(field.key) ? 1 : 0);
     }
   }
+}
+
+function ensureSuperAdminDirectoryUser(): void {
+  if (!config.superAdminEmail) return;
+  if (getUserByEmail(config.superAdminEmail)) return;
+  const template = getUserByEmail("scott@inspired.co") ?? emptyUser(config.superAdminEmail);
+  template.id = "u-superadmin";
+  template.email = config.superAdminEmail;
+  template.displayName = template.displayName || "Super Admin";
+  template.source = "manual";
+  template.domain = config.superAdminEmail.includes("@")
+    ? config.superAdminEmail.split("@")[1]!.toLowerCase()
+    : "";
+  upsertDirectoryUser(template, false);
 }
 
 function seedDemo(d: Database.Database): void {

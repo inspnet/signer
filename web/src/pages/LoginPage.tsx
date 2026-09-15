@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useAuth } from "../layouts/Auth";
 import { api } from "../api/client";
 import { useNavigate } from "react-router-dom";
@@ -5,9 +6,9 @@ import { useNavigate } from "react-router-dom";
 export function LoginPage() {
   const { providers, user, refresh } = useAuth();
   const navigate = useNavigate();
-  if (user) {
-    navigate("/");
-  }
+  useEffect(() => {
+    if (user) navigate("/", { replace: true });
+  }, [user, navigate]);
   return (
     <div className="min-h-full grid place-items-center bg-navy">
       <div className="w-full max-w-md bg-white rounded-2xl p-8 shadow-xl">

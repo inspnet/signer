@@ -27,6 +27,14 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
+          path="/signatures/:id/design"
+          element={
+            <Guard>
+              <DesignerPage />
+            </Guard>
+          }
+        />
+        <Route
           path="/"
           element={
             <Guard>
@@ -36,7 +44,6 @@ export default function App() {
         >
           <Route index element={<HomePage />} />
           <Route path="signatures" element={<SignaturesPage />} />
-          <Route path="signatures/:id/design" element={<DesignerPage />} />
           <Route path="signatures/:id/rules" element={<RulesPage />} />
           <Route path="disclaimers" element={<DisclaimersPage />} />
           <Route path="campaigns" element={<CampaignsPage />} />

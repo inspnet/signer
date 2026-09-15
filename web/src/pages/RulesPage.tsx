@@ -150,7 +150,7 @@ export function RulesPage() {
           className="rounded-full bg-navy text-white px-4 py-2 text-sm"
           onClick={async () => {
             await api.saveSignature(sig.id, { enabled: Boolean(sig.enabled), rules: sig.rules, name: sig.name });
-            alert("Rules saved");
+            setSig({ ...sig });
           }}
         >
           Save rules
