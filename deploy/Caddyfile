@@ -1,0 +1,8 @@
+# Replace the hostname with PUBLIC_URL / DNS A record for this VM.
+# Caddy terminates HTTPS and proxies the Signer portal.
+# SMTP (25/587) is published by Docker on the host, not through this file.
+
+signer.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}

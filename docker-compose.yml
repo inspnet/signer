@@ -1,0 +1,24 @@
+services:
+  signer:
+    build: .
+    image: signer:local
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "2525:2525"
+      - "587:587"
+      # Uncomment if the host can bind 25 (often requires root / CAP_NET_BIND_SERVICE):
+      # - "25:25"
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /data/signer.db
+      DATA_DIR: /data
+      HTTP_PORT: "3000"
+    volumes:
+      - signer-data:/data
+    # Azure/GCP: attach a static public IP and restrict NSG/firewall to
+    # Microsoft 365 / Google mail connector IP ranges.
+
+volumes:
+  signer-data:

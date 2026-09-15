@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #1c1917;
+  --color-navy: #1c1917;
+  --color-navy-2: #292524;
+  --color-mist: #f3efe6;
+  --color-line: #e7e0d4;
+  --color-accent: #0f766e;
+  --color-accent-2: #115e59;
+  --color-paper: #f6f1e8;
+  --color-card: #fffdf8;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #f6f1e8;
+  color: #1c1917;
+  font-family: Outfit, ui-sans-serif, system-ui, sans-serif;
+}
+
+h1,
+h2,
+.display {
+  font-family: Fraunces, Georgia, serif;
+  font-optical-sizing: auto;
+  letter-spacing: -0.03em;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 0.55rem;
+  padding: 0.5rem 0.95rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.btn-primary {
+  background: #0f766e;
+  color: #fff;
+}
+.btn-primary:hover {
+  background: #115e59;
+}
+.btn-ghost {
+  background: #fffdf8;
+  color: #1c1917;
+  border-color: #e7e0d4;
+}
+.btn-ghost:hover {
+  background: #f3efe6;
+}
+.panel {
+  background: #fffdf8;
+  border: 1px solid #e7e0d4;
+  border-radius: 1rem;
+}
+.input {
+  width: 100%;
+  border: 1px solid #e7e0d4;
+  background: #fff;
+  border-radius: 0.55rem;
+  padding: 0.5rem 0.7rem;
+}
+.input:focus {
+  outline: 2px solid #99f6e4;
+  border-color: #0f766e;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid #e7e0d4;
+  background: #fffdf8;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #44403c;
+  white-space: nowrap;
+}
+.chip:hover {
+  border-color: #0f766e;
+  color: #0f766e;
+  background: #f0fdfa;
+}
+.letter {
+  background: #fff;
+  border: 1px solid #e7e0d4;
+  border-radius: 1.15rem;
+  overflow: hidden;
+  box-shadow: 0 28px 60px -36px rgba(28, 25, 23, 0.45);
+}
+.tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 1.75rem;
+}
+.tab {
+  border-radius: 0.55rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.875rem;
+  color: #57534e;
+}
+.tab[data-active="true"],
+.tab.active {
+  background: #1c1917;
+  color: #fff;
+}
+.tab:hover:not(.active):not([data-active="true"]) {
+  background: #f3efe6;
+}
