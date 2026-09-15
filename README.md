@@ -66,8 +66,8 @@ Always-on **inbound SMTP** does not fit Cloud Run, Cloud Functions, or Azure Fun
 
 | Cloud | Recommended SKU | Typical list price | Script |
 | --- | --- | --- | --- |
-| **Azure** | `Standard_B2ats_v2` (fallback `Standard_B2s`) Ubuntu 22.04 | about US$8–15/month | `deploy/azure/create-vm.sh` |
-| **Google Cloud** | `e2-small` (lab: `e2-micro`) Ubuntu 22.04 | similar range | `deploy/gcp/create-vm.sh` |
+| **Azure** | `Standard_B2als_v2` (4 GiB; fallback `Standard_B2s`). `Standard_B2ats_v2` is cheaper but only **1 GiB** — too tight for Docker + Caddy + Node | about US$8–15/month | `deploy/azure/create-vm.sh` |
+| **Google Cloud** | `e2-small` (2 GiB; lab: `e2-micro`) Ubuntu 22.04 | similar range | `deploy/gcp/create-vm.sh` |
 
 You will end up with:
 
@@ -101,6 +101,86 @@ Azure and Google Cloud **commonly block outbound TCP 25** so VMs cannot spam. In
 
 If outbound 25 stays blocked, signed Microsoft 365 mail cannot be handed back to MX until the exemption (or another allowed relay) is in place. Set `UPSTREAM_HOST` / `UPSTREAM_PORT` to whatever path you actually have.
 
+### Compatible regions and zones
+
+SMTP **port policy is not per-zone**. Picking a different Azure availability zone or GCP zone will not unblock outbound TCP 25. What *does* vary by location is VM SKU availability, restricted-access regions, and a handful of GCP zones that do not offer E2.
+
+**What the VM must be able to do (every commercial region below):**
+
+| Need | Azure | Google Cloud |
+| --- | --- | --- |
+| Always-on Linux VM + public IPv4 | Yes (not Functions / Container Apps / Cloud Run) | Yes (not Cloud Run) |
+| Inbound TCP 25, 80, 443, 587 | Allowed by the platform; you open the NSG | Allowed by the platform; you open VPC firewall |
+| Outbound TCP 443 | Let's Encrypt, Docker Hub, Entra / Google APIs | Same |
+| Outbound TCP 587 / 465 | Not blocked (Workspace SMTP relay, other authenticated relays) | [Not blocked](https://cloud.google.com/compute/docs/tutorials/sending-mail) |
+| Outbound TCP 25 to `*.mail.protection.outlook.com` | **Subscription**, not region: allowed on standard [EA / MCA-E](https://learn.microsoft.com/troubleshoot/azure/virtual-network/troubleshoot-outbound-smtp-connectivity); blocked (and not exemptable) on PAYG, CSP, Free, Sponsorship, MSDN | **Project**, not zone: blocked to external IPs by default in every region. Do not plan a Microsoft 365 return path on 25 from GCE unless the VPC networks page already shows SMTP egress allowed |
+
+**Do not provision here** (access denied, missing SKU, or the commercial portal/OIDC path is a different cloud):
+
+| Skip | Why |
+| --- | --- |
+| Azure restricted DR regions: `australiacentral2`, `brazilsoutheast`, `francesouth`, `germanynorth`, `jioindiacentral`, `jioindiawest`, `norwaywest`, `southafricawest`, `switzerlandwest`, `uaecentral` | Subscription often cannot create VMs until Microsoft grants access |
+| Azure `denmarkeast`, `indiasouthcentral` | New / limited; Basv2 / `B2s` not in the public retail SKU list |
+| Azure US Government / Azure China | Different identity and ACME endpoints than this commercial deploy |
+| GCP `asia-southeast3-a/b/c` (Bangkok) | [No E2 machine types](https://cloud.google.com/compute/docs/regions-zones) (N4/C4 only) |
+| GCP AI zones (`…-ai…`) | GPU/TPU slices, not a general SMTP VM |
+| GCP zone letters that do not exist: `europe-west1-a`, `us-east1-a` | Those regions start at `b` (`europe-west1-b/c/d`, `us-east1-b/c/d`). `us-central1` has `a/b/c/f` (no `d`) |
+
+**Metros where both clouds can host Signer** (generally-available Azure region with Basv2/`B2s`, plus a GCP region whose listed zones include E2). Prefer a location close to the Microsoft 365 / Workspace tenant.
+
+| Metro | Azure `LOCATION` | GCP `REGION` | GCP zones with E2 |
+| --- | --- | --- | --- |
+| Northern Virginia | `eastus` or `eastus2` | `us-east4` | `us-east4-a`, `b`, `c` |
+| Iowa | `centralus` | `us-central1` | `us-central1-a`, `b`, `c`, `f` |
+| Texas | `southcentralus` | `us-south1` | `us-south1-a`, `b`, `c` |
+| Illinois | `northcentralus` | (use `us-central1` or `us-east5`) | `us-east5-a`, `b`, `c` (Ohio) |
+| Washington state | `westus2` | `us-west1` (Oregon) | `us-west1-a`, `b`, `c` |
+| California | `westus` | `us-west2` | `us-west2-a`, `b`, `c` |
+| Phoenix / Las Vegas | `westus3` | `us-west4` | `us-west4-a`, `b`, `c` |
+| Toronto | `canadacentral` | `northamerica-northeast2` | `…-a`, `b`, `c` |
+| Montréal / Québec | `canadaeast` | `northamerica-northeast1` | `…-a`, `b`, `c` |
+| São Paulo | `brazilsouth` | `southamerica-east1` | `…-a`, `b`, `c` |
+| Santiago | `chilecentral` | `southamerica-west1` | `…-a`, `b`, `c` |
+| Querétaro | `mexicocentral` | `northamerica-south1` | `…-a`, `b`, `c` |
+| London | `uksouth` | `europe-west2` | `europe-west2-a`, `b`, `c` |
+| Netherlands | `westeurope` | `europe-west4` | `europe-west4-a`, `b`, `c` |
+| Belgium | `belgiumcentral` | `europe-west1` | `europe-west1-b`, `c`, `d` (no `a`) |
+| Ireland (Azure) / Belgium (GCP) | `northeurope` | `europe-west1` | `europe-west1-b`, `c`, `d` |
+| Frankfurt | `germanywestcentral` | `europe-west3` | `europe-west3-a`, `b`, `c` |
+| Paris | `francecentral` | `europe-west9` | `europe-west9-a`, `b`, `c` |
+| Milan | `italynorth` | `europe-west8` | `europe-west8-a`, `b`, `c` |
+| Madrid | `spaincentral` | `europe-southwest1` | `…-a`, `b`, `c` |
+| Warsaw | `polandcentral` | `europe-central2` | `…-a`, `b`, `c` |
+| Sweden | `swedencentral` | `europe-north2` | `…-a`, `b`, `c` |
+| Zurich | `switzerlandnorth` | `europe-west6` | `europe-west6-a`, `b`, `c` |
+| Tokyo | `japaneast` | `asia-northeast1` | `…-a`, `b`, `c` |
+| Osaka | `japanwest` | `asia-northeast2` | `…-a`, `b`, `c` |
+| Seoul | `koreacentral` | `asia-northeast3` | `…-a`, `b`, `c` |
+| Mumbai | `westindia` or `centralindia` | `asia-south1` | `…-a`, `b`, `c` |
+| Singapore | `southeastasia` | `asia-southeast1` | `…-a`, `b`, `c` |
+| Hong Kong | `eastasia` | `asia-east2` | `…-a`, `b`, `c` |
+| Jakarta | `indonesiacentral` | `asia-southeast2` | `…-a`, `b`, `c` |
+| Sydney | `australiaeast` | `australia-southeast1` | `…-a`, `b`, `c` |
+| Melbourne | `australiasoutheast` | `australia-southeast2` | `…-a`, `b`, `c` |
+| Johannesburg | `southafricanorth` | `africa-south1` | `…-a`, `b`, `c` |
+| Israel | `israelcentral` | `me-west1` | `me-west1-a`, `b`, `c` |
+| Doha | `qatarcentral` | `me-central1` | `me-central1-a`, `b`, `c` |
+
+Safe defaults used by the helper scripts: Azure `eastus`, GCP `us-central1-a`.
+
+**Confirm on your subscription/project before you create the VM** (capacity and SKU restrictions are per-subscription; a region can list a size and still refuse yours):
+
+```bash
+# Azure: empty Restrictions column means you can place the size in that region (and which AZ 1/2/3).
+az vm list-skus --location eastus --size Standard_B2als_v2 --all \
+  --query "[?resourceType=='virtualMachines'].{name:name,zones:locationInfo[0].zones,restr:restrictions}" -o json
+
+# GCP: fails fast if the zone has no e2-small.
+gcloud compute machine-types describe e2-small --zone us-central1-a --format='get(name,zone)'
+```
+
+Azure availability zones (`1`/`2`/`3`) are optional for this single-VM design. If `list-skus` shows the size only in some zones, pass `--zone` to `az vm create`. Do not pick a restricted DR region hoping the SKU exists there.
+
 ---
 
 ### Azure
@@ -114,7 +194,7 @@ az login
 az account set --subscription "<subscription-id>"
 
 export RESOURCE_GROUP=signer-rg
-export LOCATION=eastus          # pick a region close to your tenant
+export LOCATION=eastus          # must be a generally-available region from "Compatible regions and zones"
 export VM_NAME=signer
 
 # Optional helper (creates the group, VM, and opens 22/25/80/443/587/3000):
@@ -130,7 +210,7 @@ az vm create \
   --resource-group "$RESOURCE_GROUP" \
   --name "$VM_NAME" \
   --image Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest \
-  --size Standard_B2ats_v2 \
+  --size Standard_B2als_v2 \
   --public-ip-sku Standard \
   --nsg-rule SSH \
   --admin-username azureuser \
@@ -142,7 +222,7 @@ for port in 80 443 25 587 3000; do
 done
 ```
 
-If `Standard_B2ats_v2` is unavailable in the region, use `--size Standard_B2s`.
+If `Standard_B2als_v2` is unavailable in the region, use `--size Standard_B2s`. Do not use a restricted DR region (see the table above).
 
 #### 2. Make the public IP static and note it
 
@@ -283,7 +363,7 @@ gcloud auth login
 gcloud config set project "<project-id>"
 
 export PROJECT=$(gcloud config get-value project)
-export ZONE=us-central1-a
+export ZONE=us-central1-a       # E2 zone from "Compatible regions and zones"; not europe-west1-a / us-east1-a
 export NAME=signer
 export REGION=${ZONE%-*}
 

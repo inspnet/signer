@@ -2,17 +2,23 @@
 # Cheapest always-on pattern on Azure: one B-series VM + Docker.
 # Container Apps is fine for the HTTPS portal, but inbound SMTP on port 25 is
 # unreliable there. A small VM keeps mail flow simple and costs ~US$8–15/month.
+#
+# LOCATION must be a generally-available commercial region (see README
+# "Compatible regions and zones"). Restricted DR regions and sovereign clouds
+# will fail or cannot run this product's Entra / Let's Encrypt path.
+# Outbound TCP 25 is a subscription policy (EA/MCA-E), not a region setting.
 set -euo pipefail
 : "${RESOURCE_GROUP:?}"
 : "${LOCATION:=eastus}"
 : "${VM_NAME:=signer}"
+: "${VM_SIZE:=Standard_B2als_v2}"
 
 az group create -n "$RESOURCE_GROUP" -l "$LOCATION"
 az vm create \
   --resource-group "$RESOURCE_GROUP" \
   --name "$VM_NAME" \
   --image Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest \
-  --size Standard_B2ats_v2 \
+  --size "$VM_SIZE" \
   --public-ip-sku Standard \
   --nsg-rule SSH \
   --admin-username azureuser \
