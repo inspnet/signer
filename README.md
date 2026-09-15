@@ -2,7 +2,7 @@
 
 Self-hosted **server-side** email signatures and legal disclaimers for Microsoft 365 and Google Workspace.
 
-Signatures are applied in the mail flow **after** the user clicks Send. That is the same model Exclaimer Cloud uses with Exchange connectors — not a Graph/Gmail API push into the user's mailbox (which iOS Mail and other clients can ignore or overwrite).
+Signatures are applied in the mail flow **after** the user clicks Send — not by pushing HTML into the user's mailbox with Graph or the Gmail API, which iOS Mail and other clients can ignore or overwrite.
 
 Mail is processed on **your** Azure or Google Cloud host and returned to Microsoft 365 or Google. It does not pass through a vendor SaaS.
 
@@ -14,7 +14,7 @@ Mail is processed on **your** Azure or Google Cloud host and returned to Microso
 | Exchange transport disclaimer text | Partially | No | Stays in Microsoft 365, very limited design |
 | **This product: SMTP gateway + connectors** | Yes | No | Your VM/container in Azure or GCP, then back to M365/Google |
 
-Exclaimer's own server-side path is: mailbox → Send connector → processor → Receive connector → original recipients, with `X-ExclaimerHostedSignatures-MessageProcessed: true` to stop loops. Signer does the same with `X-Signer-MessageProcessed: true` (configurable).
+Mail path: mailbox → send connector → Signer → receive connector → original recipients. A processed-mail header (`X-Signer-MessageProcessed: true`, configurable) stops connector loops.
 
 ## Architecture
 
@@ -82,7 +82,7 @@ Lab only: `DEMO_MODE=true` and `AUTH_ALLOW_DEV_LOGIN=true` seeds sample users an
 
 Sign in → **Mail flow & settings** for generated Exchange PowerShell and Google Admin steps (host, SMTP relay, content compliance). SPF must include this host's sending IP.
 
-## Product surface (from Exclaimer-style operations)
+## Product surface
 
 - **Signatures** — create, folders, evaluation order, block designer, HTML fields from the directory
 - **Rules** — senders, exceptions, groups/domains, internal vs external recipients, date/time, reply/thread advanced rules

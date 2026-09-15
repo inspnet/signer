@@ -52,7 +52,7 @@ export function SignaturesPage() {
       <p className="text-sm text-slate-500 mt-4">Signatures are displayed below in the order in which they are evaluated.</p>
       {tab === "reorder" && (
         <div className="mt-4 bg-white border border-line rounded-xl p-4">
-          <p className="text-sm text-slate-600 mb-3">Move a signature earlier so it is considered first (Exclaimer-style first match wins).</p>
+          <p className="text-sm text-slate-600 mb-3">Move a signature earlier so it is considered first. The first match wins.</p>
           {items.map((s, i) => (
             <div key={s.id} className="flex items-center gap-3 py-2 border-b border-line last:border-0">
               <span className="w-6 text-slate-400">{i + 1}</span>
