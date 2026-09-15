@@ -5,9 +5,10 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-      - "2525:2525"
       - "587:587"
-      # Uncomment if the host can bind 25 (often requires root / CAP_NET_BIND_SERVICE):
+      # Exchange Online outbound connectors smart-host on TCP 25 with STARTTLS.
+      # Do not publish 25 to the internet. If you use M365, map 25 and allow
+      # only the Azure Office365 service tag / Exchange Online IP ranges:
       # - "25:25"
     env_file:
       - .env

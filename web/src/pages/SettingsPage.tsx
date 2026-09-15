@@ -41,12 +41,17 @@ function MailFlow() {
   };
   return (
     <div className="mt-6 space-y-6 max-w-4xl">
-      <p className="text-stone-600 leading-7">{(data.notes as string[]).join(" ")}</p>
+      <p className="text-stone-600 leading-7">{(data.notes as string[])[0]}</p>
+      <ul className="list-disc ml-5 text-sm text-stone-600 space-y-2">
+        {(data.notes as string[]).slice(1).map((n) => (
+          <li key={n}>{n}</li>
+        ))}
+      </ul>
       <section className="panel p-5">
         <h2 className="font-semibold text-lg">Microsoft 365 / Exchange Online</h2>
         <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-stone-700">
-          <li>Create a Send connector to partner {ms.sendConnector.smartHost} with TLS, scoped to a transport rule.</li>
-          <li>Create a Receive connector from partner, requiring TLS and certificate name {ms.receiveConnector.certDomain}.</li>
+          <li>Create an OnPremises send connector to {ms.sendConnector.smartHost} with TLS domain validation of the Signer certificate (not EncryptionOnly).</li>
+          <li>Create an OnPremises receive connector that requires TLS and matches certificate name {ms.receiveConnector.certDomain}. This is how Exchange authenticates Signer on the way back.</li>
           <li>
             Transport rule: sender inside the organisation, except if header {ms.transportRule.exceptIfHeader} is true, redirect to the
             Signer send connector.
@@ -58,7 +63,7 @@ function MailFlow() {
         <h2 className="font-semibold text-lg">Google Workspace</h2>
         <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-stone-700">
           <li>
-            Hosts: add {String(google.hostRoute.host)} port {String(google.hostRoute.port)}.
+            Hosts: add {String(google.hostRoute.host)} port {String(google.hostRoute.port)} (587, require TLS). Do not publish port 25 for Google.
           </li>
           <li>SMTP relay: {google.smtpRelay.note}</li>
           <li>Content compliance: {google.contentCompliance.expression}, then change route to Signer with TLS.</li>

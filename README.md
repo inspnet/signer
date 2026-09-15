@@ -41,6 +41,63 @@ Recipient
 
 The HTTPS portal (admin designer, rules, tester, user details editor) is the same container.
 
+## Mail path, TLS, and who may connect
+
+Confirmed path:
+
+1. User sends from Outlook / Gmail / iOS (mail is still **inside** Microsoft 365 or Google Workspace).
+2. A transport rule / content-compliance policy **diverts only in-org mail** to Signer over TLS.
+3. Signer inserts the signature and stamps `X-Signer-MessageProcessed: true`.
+4. Signer **returns the message to the same tenant** (Exchange inbound connector or Google SMTP relay) — it does not deliver to the public internet.
+5. Microsoft / Google then send to the real recipients (and apply DKIM on that final hop).
+
+Nothing in this product is an open SMTP relay.
+
+### How inbound mail is authenticated (not the open internet)
+
+Exchange Online **cannot SMTP-AUTH** to a smart host and does **not** present a customer-pinned client certificate on that hop. Google content-compliance routes are the same: TLS to a named host, not a username.
+
+So tenant-only inbound is **layered**, not a single password:
+
+| Layer | What it proves | Required |
+| --- | --- | --- |
+| Cloud firewall / NSG | SYN packets only from Microsoft or Google mail infrastructure | Yes. Never `0.0.0.0/0` on SMTP. Azure: source service tag `Office365`. Google: [mail server IP ranges](https://support.google.com/a/answer/60764). |
+| `SMTP_ALLOWED_CIDRS` | Signer rejects `MAIL FROM` from any other IP even if the NSG is wrong | Yes in production |
+| `SMTP_REQUIRE_TLS=true` + `TLS_CERT_PATH` | No plaintext SMTP. Session must STARTTLS | Yes in production |
+| Outbound connector `TlsSettings DomainValidation` + `TlsDomain` | **Microsoft verifies Signer’s server certificate** (public CA, SAN = `SMTP_HOSTNAME`) | Yes for M365 |
+| Inbound connector `RequireTls` + `RestrictDomainsToCertificate` + `TlsSenderCertificateName` | **Microsoft verifies Signer on the way back** (this *is* certificate auth) | Yes for M365 |
+| Google SMTP relay allow-list + require TLS | Only this VM’s IP may inject mail back into Workspace | Yes for Google |
+
+SMTP AUTH (`UPSTREAM_USER` / `UPSTREAM_PASS`) is optional extra on the **return** path to Google’s relay. It is not available for Exchange Online outbound connectors.
+
+**Client certificates (mTLS) from Microsoft → Signer** are not a useful control here: Exchange Online will not send you a unique client cert you can pin. Domain validation of **your** certificate (both directions) is the Microsoft-documented pattern for an in-tenant signature add-on.
+
+Signer refuses `MAIL FROM` unless STARTTLS already completed (`SMTP_REQUIRE_TLS`, on by default outside demo mode). Empty `SMTP_ALLOWED_CIDRS` in production logs a warning; treat that as misconfiguration.
+
+### TLS vs port 25
+
+All sessions must be TLS (STARTTLS). We do **not** run an unencrypted listener as the production path.
+
+| Hop | Port | Encryption |
+| --- | --- | --- |
+| Google Workspace → Signer | **587** (you choose this on the host route) | STARTTLS, required |
+| Signer → Google `smtp-relay.gmail.com` | **587** | STARTTLS, required |
+| Exchange Online → Signer | **TCP 25 + STARTTLS** | Encrypted. Exchange Online outbound/smart-host connectors **cannot use 587** — that is a Microsoft MTA limitation, not a Signer setting. |
+| Signer → `*.mail.protection.outlook.com` | **TCP 25 + STARTTLS** | Encrypted. Microsoft MX does not accept 587. Azure/GCP often block *outbound* 25; request an SMTP exemption for this VM. |
+
+Production defaults: listen on **587 only** (`SMTP_PORT=0`). For Microsoft 365, also bind 25 (`SMTP_PORT=25` and uncomment `25:25` in Compose) **and** allow it solely from the `Office365` NSG tag / Exchange Online ranges. That is not “SMTP open to the internet.”
+
+### Will DKIM survive?
+
+**Yes, on the final send**, if you keep the path above.
+
+- DKIM is a body hash. If Signer changed the HTML **after** a signature was already applied, that DKIM would fail.
+- Diversion happens **before** the tenant’s internet send. After Signer returns the message, Exchange / Google DKIM-sign the **modified** body on the way to recipients.
+- Use `CloudServicesMailEnabled $true` on both Microsoft connectors so internal headers stay trusted (Microsoft’s add-on-service pattern).
+- Signer **strips** `DKIM-Signature`, ARC, and `Authentication-Results` from the diverted copy so a stale fail is not left on the rewritten MIME.
+
+SPF/DMARC at the recipient see Microsoft or Google as the sending IP (the second hop), not Signer, which is what you want. Do not send from Signer straight to the public MX of the recipient.
+
 ---
 
 ## Deploy
@@ -54,8 +111,8 @@ Always-on **inbound SMTP** does not fit Cloud Run, Cloud Functions, or Azure Fun
 
 You will end up with:
 
-- **HTTPS portal** on `https://signer.example.com` (Caddy or nginx in front of container port 3000)
-- **SMTP gateway** on **587** (and **25** if the host can bind it)
+- **HTTPS portal** on `https://signer.example.com` (Caddy in front of container port 3000)
+- **SMTP gateway** on **587** with required STARTTLS (and TCP 25 **only** from Exchange Online, STARTTLS, if you use Microsoft 365)
 - **SQLite + uploads** on a Docker volume (`/data`)
 - Mail returned to **your** Microsoft 365 tenant or Google Workspace, not a third-party SaaS
 
@@ -71,18 +128,7 @@ Have these ready:
 
 Do **not** set `DEMO_MODE=true` or `AUTH_ALLOW_DEV_LOGIN=true` on a host that receives real mail.
 
-### Port 25 (read this once)
-
-Azure and Google Cloud **commonly block outbound TCP 25** so VMs cannot spam. Inbound 25 is a separate issue (NSG / VPC firewall plus whether the process may bind port 25).
-
-| Direction | What it is | What usually works |
-| --- | --- | --- |
-| **Inbound** Microsoft 365 → Signer | Exchange Online outbound/partner connectors deliver to a smart host on **port 25** | Open NSG/VPC **25** (and **587**). Map `25:25` in Compose if you need M365. Restrict source IPs when you can. |
-| **Inbound** Google → Signer | Content compliance “change route” uses the **host route port you set** | Set the host route to **587** if you would rather not expose 25. |
-| **Outbound** Signer → Microsoft MX | `*.mail.protection.outlook.com:25` | Often blocked. Request an **SMTP exemption** (Azure) or use a path your subscription allows. |
-| **Outbound** Signer → Google | `smtp-relay.gmail.com:587` | Works without port 25. Prefer this for Workspace. |
-
-If outbound 25 stays blocked, signed Microsoft 365 mail cannot be handed back to MX until the exemption (or another allowed relay) is in place. Set `UPSTREAM_HOST` / `UPSTREAM_PORT` to whatever path you actually have.
+The TLS / DKIM / IP-allowlist model is in [Mail path, TLS, and who may connect](#mail-path-tls-and-who-may-connect). Do not skip `SMTP_REQUIRE_TLS`, `TLS_CERT_*`, or `SMTP_ALLOWED_CIDRS` in production.
 
 ---
 
@@ -100,7 +146,7 @@ export RESOURCE_GROUP=signer-rg
 export LOCATION=eastus          # pick a region close to your tenant
 export VM_NAME=signer
 
-# Optional helper (creates the group, VM, and opens 22/25/80/443/587/3000):
+# Optional helper (HTTPS 80/443, SMTP 587, TCP 25 only from Office365 service tag):
 ./deploy/azure/create-vm.sh
 ```
 
@@ -119,7 +165,7 @@ az vm create \
   --admin-username azureuser \
   --generate-ssh-keys
 
-for port in 80 443 25 587 3000; do
+for port in 80 443 587; do
   az vm open-port --resource-group "$RESOURCE_GROUP" --name "$VM_NAME" \
     --port "$port" --priority $((1100 + port / 10))
 done
@@ -140,11 +186,20 @@ az vm show -d -g "$RESOURCE_GROUP" -n "$VM_NAME" --query publicIps -o tsv
 
 Create a DNS **A record**: `signer.example.com` → that IPv4 address. Wait until it resolves before requesting TLS certificates.
 
-#### 3. Tighten the network security group (recommended)
+#### 3. Tighten the network security group (required for SMTP)
 
-Leave SSH (22) open to your admin IPs only. For SMTP, prefer Microsoft’s published [Office 365 IP ranges](https://learn.microsoft.com/microsoft-365/enterprise/urls-and-ip-address-ranges) (service `Exchange Online`, TCP 25/587) instead of `0.0.0.0/0`. HTTPS 80/443 can stay world-open for the portal and Let’s Encrypt.
+Leave SSH (22) open to your admin IPs only. HTTPS 80/443 can stay world-open for the portal and Let’s Encrypt.
 
-Also set `SMTP_ALLOWED_CIDRS` in `.env` to the same ranges once you know them (comma-separated CIDRs). Empty means the SMTP banner accepts everyone — lab only.
+Do **not** use `az vm open-port --port 25` (that is `Internet`). For Exchange Online STARTTLS, allow TCP 25 **and** 587 only from the `Office365` service tag:
+
+```bash
+NSG=$(az network nsg list -g "$RESOURCE_GROUP" --query "[?contains(name, '$VM_NAME')].name | [0]" -o tsv)
+az network nsg rule create -g "$RESOURCE_GROUP" --nsg-name "$NSG" \
+  --name allow-exchange-online-smtp --priority 1103 --direction Inbound --access Allow \
+  --protocol Tcp --source-address-prefixes Office365 --destination-port-ranges 25 587
+```
+
+Also set `SMTP_ALLOWED_CIDRS` to [Exchange Online IP ranges](https://learn.microsoft.com/microsoft-365/enterprise/urls-and-ip-address-ranges). Empty CIDRs means the process will accept any peer that reached the port.
 
 #### 4. SSH in and install Docker
 
@@ -177,12 +232,18 @@ SESSION_SECRET=<openssl rand -base64 48>
 SMTP_HOSTNAME=signer.example.com
 SMTP_PORT=25
 SMTP_SUBMISSION_PORT=587
-# Exchange Online delivers to smart hosts on 25. Uncomment 25:25 in docker-compose.yml.
+SMTP_REQUIRE_TLS=true
+SMTP_ALLOWED_CIDRS=
+TLS_CERT_PATH=/etc/caddy/signer.crt
+TLS_KEY_PATH=/etc/caddy/signer.key
+# Map 25:25 in docker-compose.yml. NSG source must be Office365, not Internet.
 
-# After signing, hand mail back to your tenant MX (needs outbound 25 or an exemption):
+# Return to tenant MX (STARTTLS). Azure often blocks outbound 25 until you request an exemption:
 UPSTREAM_HOST=yourtenant-com.mail.protection.outlook.com
 UPSTREAM_PORT=25
 UPSTREAM_SECURE=false
+UPSTREAM_TLS_REJECT_UNAUTHORIZED=true
+UPSTREAM_TLS_SERVERNAME=signer.example.com
 
 ENTRA_TENANT_ID=<directory / tenant ID>
 ENTRA_CLIENT_ID=<app registration id>
@@ -197,15 +258,11 @@ Find `UPSTREAM_HOST` in Microsoft 365 admin → Settings → Domains → the dom
 
 If Azure still blocks outbound 25 after you request an exemption, mail cannot return to MX until that is granted. Do not point `UPSTREAM_HOST` at a random open relay.
 
-#### 6. Publish port 25 if Exchange Online will send to this host
+#### 6. Publish STARTTLS on TCP 25 for Exchange Online only
 
-In `docker-compose.yml`, uncomment:
+Microsoft’s MTA smart-hosts on **TCP 25 with STARTTLS** (not 587). In `docker-compose.yml` uncomment `- "25:25"`. Keep `SMTP_REQUIRE_TLS=true`. Do not allow Internet on that NSG rule.
 
-```yaml
-- "25:25"
-```
-
-The process binds 25 as root inside the container (see the Dockerfile). Restrict who can reach it with the NSG and `SMTP_ALLOWED_CIDRS`.
+Copy the Let’s Encrypt leaf+key (or a dedicated SMTP cert whose SAN is `SMTP_HOSTNAME`) to `TLS_CERT_PATH` / `TLS_KEY_PATH`. Caddy can obtain the cert; SMTP does not go through Caddy.
 
 #### 7. TLS for the portal (Caddy on the host)
 
@@ -224,9 +281,7 @@ sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
 sudo systemctl enable --now caddy
 ```
 
-Caddy listens on 80/443, obtains a Let’s Encrypt certificate, and reverse-proxies to `127.0.0.1:3000`. SMTP stays on 25/587 on Docker, not through Caddy.
-
-Optional: put `TLS_CERT_PATH` / `TLS_KEY_PATH` in `.env` if you also want STARTTLS on the SMTP listeners (copy the live Caddy certs, or use a separate certificate whose CN/SAN matches `SMTP_HOSTNAME`). Exchange partner receive connectors expect the name on **your** certificate when Signer talks **back** to Microsoft; that is `UPSTREAM_TLS_SERVERNAME` / the inbound connector `TlsSenderCertificateName`.
+Caddy listens on 80/443, obtains a Let’s Encrypt certificate, and reverse-proxies to `127.0.0.1:3000`. SMTP STARTTLS uses `TLS_CERT_PATH` / `TLS_KEY_PATH` (same hostname as `SMTP_HOSTNAME`). The inbound Exchange connector matches that name (`TlsSenderCertificateName`).
 
 #### 8. Start the app
 
@@ -327,13 +382,17 @@ PUBLIC_URL=https://signer.example.com
 SUPER_ADMIN_EMAIL=it-admin@yourdomain.com
 SESSION_SECRET=<openssl rand -base64 48>
 SMTP_HOSTNAME=signer.example.com
-SMTP_PORT=25
+SMTP_PORT=0
 SMTP_SUBMISSION_PORT=587
+SMTP_REQUIRE_TLS=true
+TLS_CERT_PATH=/etc/caddy/signer.crt
+TLS_KEY_PATH=/etc/caddy/signer.key
 
-# Return path — do not rely on outbound 25:
+# Return path — TLS on 587, never outbound 25:
 UPSTREAM_HOST=smtp-relay.gmail.com
 UPSTREAM_PORT=587
 UPSTREAM_SECURE=false
+UPSTREAM_TLS_REJECT_UNAUTHORIZED=true
 # If the Workspace SMTP relay requires AUTH (allowed sender list + credentials):
 # UPSTREAM_USER=
 # UPSTREAM_PASS=
@@ -355,7 +414,7 @@ docker compose up -d --build
 curl -sS https://signer.example.com/api/health
 ```
 
-If the content-compliance route targets port 587, you do not need host port 25. If you set the host route to 25, uncomment `25:25` in `docker-compose.yml`.
+Google content compliance should target **port 587**. Do not publish host port 25 on GCP.
 
 #### 3. GCP outbound SMTP
 
@@ -400,39 +459,41 @@ Google Cloud **blocks outbound TCP 25** by default on most projects. Sending bac
 Sign in to Signer → **Mail flow** for values filled from your `.env`. In Exchange Online PowerShell (`Connect-ExchangeOnline`):
 
 ```powershell
-$smartHost = "signer.example.com"   # SMTP_HOSTNAME; Exchange Online uses port 25
+$smartHost = "signer.example.com"   # SAN on Signer's public certificate
 $header    = "X-Signer-MessageProcessed"
 
-New-OutboundConnector -Name "Signer send" -ConnectorType Partner -UseMXRecord $false `
-  -SmartHosts $smartHost -TlsSettings EncryptionOnly -Enabled $true `
-  -IsTransportRuleScoped $true
+New-OutboundConnector -Name "Signer send" -ConnectorType OnPremises `
+  -IsTransportRuleScoped $true -UseMxRecord $false -SmartHosts $smartHost `
+  -TlsSettings DomainValidation -TlsDomain $smartHost -CloudServicesMailEnabled $true
 
-New-InboundConnector -Name "Signer receive" -ConnectorType Partner -SenderDomains * `
+New-InboundConnector -Name "Signer receive" -ConnectorType OnPremises -SenderDomains * `
   -RequireTls $true -RestrictDomainsToCertificate $true `
-  -TlsSenderCertificateName $smartHost
+  -TlsSenderCertificateName $smartHost -CloudServicesMailEnabled $true
 
 New-TransportRule -Name "Identify messages to send to Signer" `
   -FromScope InOrganization `
   -ExceptIfHeaderContainsMessageHeader $header `
   -ExceptIfHeaderContainsWords "true" `
-  -RouteMessageOutboundConnector "Signer send"
+  -RouteMessageOutboundConnector "Signer send" `
+  -StopRuleProcessing $true
 ```
 
 Notes:
 
-- Scope the outbound connector with the transport rule so **only** in-org mail that lacks the processed header is diverted. That prevents loops.
-- The inbound connector accepts mail **from Signer back into** the tenant. The certificate name must match what Signer presents (`SMTP_HOSTNAME` / `UPSTREAM_TLS_SERVERNAME`).
+- Only in-org senders are diverted, and only when the processed header is missing — that is the loop brake.
+- `DomainValidation` is how Exchange authenticates **Signer** on the way out. `TlsSenderCertificateName` is how Exchange authenticates **Signer** on the way back. Combined with an NSG sourced from `Office365`, the open internet cannot inject mail.
+- `CloudServicesMailEnabled` keeps internal Exchange headers so the returned message is still trusted inside the tenant (needed for DKIM on the final send).
 - After this, send a test to an external recipient and watch **Activity** in Signer and `docker compose logs`.
 
 ### Connect Google Workspace
 
 In [admin.google.com](https://admin.google.com) → Apps → Google Workspace → Gmail → **Routing** / **Compliance**:
 
-1. **Hosts**: add `signer.example.com` port **587** (or 25 if you published it), require TLS.
+1. **Hosts**: add `signer.example.com` port **587**, require TLS. Do not use port 25.
 2. **SMTP relay service**: allow Signer to return mail. Restrict to **Only addresses in my domains**, require TLS, and allow-list this VM’s **public IP**.
 3. **Content compliance** (outbound and internal sending): advanced content match on **full headers**, header `X-Signer-MessageProcessed` **does not contain** `true` → action **Change route** to the Signer host, require TLS.
 
-SPF: include this VM’s sending IP (or `smtp-relay.gmail.com` if that is the return path) on every domain that sends through Signer. DKIM stays on Google/Microsoft; you are not replacing their outbound reputation, only inserting HTML on the way through.
+Recipients authenticate the message as Google Workspace mail (SPF of the relay / DKIM of the domain) because Signer returns the message **before** Gmail’s internet send. Tighten firewall sources on TCP 587 to [Google mail IP ranges](https://support.google.com/a/answer/60764) and set the same CIDRs in `SMTP_ALLOWED_CIDRS`.
 
 ---
 
@@ -465,7 +526,7 @@ Copy `signer-data.tgz` off the VM. Restore by extracting into the same volume be
 | --- | --- |
 | Portal | `curl -sS https://signer.example.com/api/health` |
 | Container | `docker compose ps` and `docker compose logs -f` |
-| SMTP banner | `nc -vz signer.example.com 587` (and 25 if mapped) |
+| SMTP banner | `openssl s_client -starttls smtp -connect signer.example.com:587` (cert SAN = `SMTP_HOSTNAME`) |
 | Loop header | Message trace in M365 / Gmail shows `X-Signer-MessageProcessed: true` after a successful pass |
 | Unsigned mail | `FAILURE_MODE=fail-open` delivers without a signature if processing throws; `fail-closed` returns SMTP 4xx so the tenant retries |
 
@@ -516,4 +577,4 @@ docker run --rm -p 3000:3000 -p 587:587 -p 2525:2525 \
 
 ## Configuration reference
 
-See `.env.example`. Important keys: `PUBLIC_URL`, `SUPER_ADMIN_EMAIL`, `SESSION_SECRET`, `SMTP_*`, `UPSTREAM_*`, `PROCESSED_HEADER`, `FAILURE_MODE` (`fail-open` delivers unsigned mail if processing throws; `fail-closed` defers with 4xx).
+See `.env.example`. Important keys: `PUBLIC_URL`, `SUPER_ADMIN_EMAIL`, `SESSION_SECRET`, `SMTP_REQUIRE_TLS`, `SMTP_ALLOWED_CIDRS`, `TLS_CERT_PATH`, `UPSTREAM_*`, `PROCESSED_HEADER`, `FAILURE_MODE`.

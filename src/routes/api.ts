@@ -350,17 +350,17 @@ export function registerApi(app: FastifyInstance): void {
         sendConnector: {
           name: "Signer send — route outbound for signatures",
           from: "Office 365",
-          to: "Partner organization",
-          smartHost: `${host}:587`,
-          tls: "Required",
-          usage: "Use only when a transport rule redirects messages to this connector"
+          to: "Your organization's email server",
+          smartHost: host,
+          tls: "Always; DomainValidation of SMTP_HOSTNAME (public CA certificate)",
+          usage: "Transport-rule scoped only. Exchange Online connects with STARTTLS (TCP 25 to the smart host). Do not open 25 to the internet — NSG source = Office365 / Exchange Online."
         },
         receiveConnector: {
           name: "Signer receive — accept signed mail",
-          from: "Partner organization",
+          from: "Your organization's email server",
           to: "Office 365",
           certDomain: host,
-          tls: "Required"
+          tls: "RequireTls + RestrictDomainsToCertificate (Signer client cert SAN must match SMTP_HOSTNAME)"
         },
         transportRule: {
           name: "Identify messages to send to Signer",
@@ -372,13 +372,13 @@ export function registerApi(app: FastifyInstance): void {
         powershell: [
           `$smartHost = "${host}"`,
           `$header = "${header}"`,
-          `New-OutboundConnector -Name "Signer send" -ConnectorType Partner -UseMXRecord $false -SmartHosts $smartHost -TlsSettings EncryptionOnly -Enabled $true -RouteAllMessagesViaOnPremises $false -IsTransportRuleScoped $true`,
-          `New-InboundConnector -Name "Signer receive" -ConnectorType Partner -SenderDomains * -RequireTls $true -RestrictDomainsToCertificate $true -TlsSenderCertificateName $smartHost`,
-          `New-TransportRule -Name "Identify messages to send to Signer" -FromScope InOrganization -ExceptIfHeaderContainsMessageHeader $header -ExceptIfHeaderContainsWords "true" -RouteMessageOutboundConnector "Signer send"`
+          `New-OutboundConnector -Name "Signer send" -ConnectorType OnPremises -IsTransportRuleScoped $true -UseMxRecord $false -SmartHosts $smartHost -TlsSettings DomainValidation -TlsDomain $smartHost -CloudServicesMailEnabled $true`,
+          `New-InboundConnector -Name "Signer receive" -ConnectorType OnPremises -SenderDomains * -RequireTls $true -RestrictDomainsToCertificate $true -TlsSenderCertificateName $smartHost -CloudServicesMailEnabled $true`,
+          `New-TransportRule -Name "Identify messages to send to Signer" -FromScope InOrganization -ExceptIfHeaderContainsMessageHeader $header -ExceptIfHeaderContainsWords "true" -RouteMessageOutboundConnector "Signer send" -StopRuleProcessing $true`
         ].join("\n")
       },
       google: {
-        hostRoute: { name: "Signer", host, port: 25 },
+        hostRoute: { name: "Signer", host, port: 587 },
         smtpRelay: {
           name: "Allow Signer to return mail",
           allowedSenders: "Only addresses in my domains",
@@ -394,10 +394,11 @@ export function registerApi(app: FastifyInstance): void {
       },
       spf: `include the sending IP of ${publicHost} (or this host) in each domain's SPF record so signed mail authenticates after it returns through Microsoft/Google.`,
       notes: [
-        "Mail is processed on this instance and returned to Microsoft 365 or Google — it is not sent to a third-party SaaS.",
-        "Users cannot remove the signature: it is applied after Send on the server, for every client including iOS Mail.",
-        "Azure often blocks outbound TCP 25. Prefer inbound 587 from Exchange connectors, and request an SMTP exemption or use MX:25 if your subscription allows it.",
-        "Set UPSTREAM_HOST to your tenant's mail.protection.outlook.com hostname (Microsoft) or smtp-relay.gmail.com (Google)."
+        "Path: mailbox → Exchange / Gmail routing → Signer (TLS) → back to the tenant → then to recipients. Signer never delivers to the public internet itself.",
+        "Do not expose SMTP to the open internet. Authenticate inbound with: (1) TLS required, (2) SMTP_ALLOWED_CIDRS + cloud firewall limited to Exchange Online / Google mail hosts, (3) on the return path, Microsoft inbound connector RestrictDomainsToCertificate / Google SMTP relay IP allow-list.",
+        "Exchange Online outbound connectors cannot use port 587; they SMART-host on TCP 25 with STARTTLS. Require TLS on Signer and allow 25 only from the Office365 NSG service tag. Google content compliance should target 587.",
+        "DKIM is applied by Microsoft/Google on the final send after mail returns. Signer strips any DKIM/ARC stamps from the diverted copy so a broken signature is not left on a modified body.",
+        "Set UPSTREAM_HOST to yourtenant.mail.protection.outlook.com (Microsoft, STARTTLS) or smtp-relay.gmail.com:587 (Google)."
       ]
     };
   });

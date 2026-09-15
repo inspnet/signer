@@ -40,9 +40,10 @@ async function relayUpstream(raw: Buffer, envelopeFrom: string, envelopeTo: stri
     host: config.upstream.host,
     port: config.upstream.port,
     secure: config.upstream.secure,
+    requireTLS: !config.upstream.secure,
     tls: {
       servername: config.upstream.tlsServername || config.upstream.host,
-      rejectUnauthorized: false
+      rejectUnauthorized: config.upstream.tlsRejectUnauthorized
     },
     auth: config.upstream.user
       ? { user: config.upstream.user, pass: config.upstream.pass }
@@ -56,14 +57,21 @@ async function relayUpstream(raw: Buffer, envelopeFrom: string, envelopeTo: stri
 }
 
 function createServer(banner: string): SMTPServer {
+  const tls = tlsOptions();
+  const hasTls = Boolean(tls.key && tls.cert);
+  if (config.smtp.requireTls && !hasTls) {
+    throw new Error("SMTP_REQUIRE_TLS is set but TLS_CERT_PATH / TLS_KEY_PATH are missing");
+  }
   return new SMTPServer({
     name: config.smtp.hostname,
     banner,
+    logger: false,
     authOptional: true,
-    disabledCommands: tlsOptions().key ? [] : ["AUTH"],
-    hideSTARTTLS: !tlsOptions().key,
-    key: tlsOptions().key,
-    cert: tlsOptions().cert,
+    allowInsecureAuth: false,
+    disabledCommands: hasTls ? [] : ["AUTH", "STARTTLS"],
+    hideSTARTTLS: !hasTls,
+    key: tls.key,
+    cert: tls.cert,
     size: 35 * 1024 * 1024,
     onConnect(session, callback) {
       if (!ipAllowed(session.remoteAddress)) {
@@ -71,7 +79,10 @@ function createServer(banner: string): SMTPServer {
       }
       callback();
     },
-    onMailFrom(_address, _session, callback) {
+    onMailFrom(_address, session, callback) {
+      if (config.smtp.requireTls && !session.secure) {
+        return callback(new Error("STARTTLS required"));
+      }
       callback();
     },
     onRcptTo(_address, _session, callback) {
@@ -161,6 +172,13 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
 export function startSmtp(): SMTPServer[] {
   const servers: SMTPServer[] = [];
   const ports = [...new Set([config.smtp.port, config.smtp.submissionPort, config.smtp.altPort])].filter((p) => p > 0);
+  if (config.smtp.requireTls && !(tlsOptions().key && tlsOptions().cert)) {
+    console.error("SMTP not started: SMTP_REQUIRE_TLS=true needs TLS_CERT_PATH and TLS_KEY_PATH");
+    return servers;
+  }
+  if (!config.smtp.allowedCidrs.length && !config.demoMode) {
+    console.warn("SMTP_ALLOWED_CIDRS is empty; any host that can reach this port may relay. Set Exchange Online / Google mail CIDRs.");
+  }
   for (const port of ports) {
     const server = createServer(`Signer signature gateway`);
     server.on("error", (err) => {

@@ -20,12 +20,13 @@ RUN mkdir -p /data/uploads
 ENV DATABASE_PATH=/data/signer.db
 ENV DATA_DIR=/data
 ENV HTTP_PORT=3000
-ENV SMTP_PORT=25
+ENV SMTP_PORT=0
 ENV SMTP_SUBMISSION_PORT=587
-ENV SMTP_ALT_PORT=2525
-EXPOSE 3000 25 587 2525
+ENV SMTP_ALT_PORT=0
+ENV SMTP_REQUIRE_TLS=true
+EXPOSE 3000 587
 VOLUME ["/data"]
-# Root is required to bind SMTP port 25. Restrict the container with a network
-# policy / NSG so only Microsoft 365 and Google mail hosts can reach it.
+# Bind 25 only when SMTP_PORT=25 (Exchange Online smart-host + STARTTLS).
+# Firewall that port to Microsoft/Google mail hosts — never the open internet.
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "dist/server.js"]

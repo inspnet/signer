@@ -159,6 +159,27 @@ describe("end-to-end processing", () => {
     expect(text.toLowerCase()).toContain("confidential");
   });
 
+  it("drops DKIM and ARC headers so the tenant can sign the modified body", async () => {
+    const raw = Buffer.from(
+      [
+        "From: Scott Williamson <scott@inspired.co>",
+        "To: Ada <ada@contoso.com>",
+        "Subject: Project update",
+        "DKIM-Signature: v=1; a=rsa-sha256; d=inspired.co; s=selector; bh=old;",
+        "ARC-Seal: i=1; cv=none;",
+        "MIME-Version: 1.0",
+        "Content-Type: text/html; charset=utf-8",
+        "",
+        "<p>Hello Ada, please see the update.</p>"
+      ].join("\r\n")
+    );
+    const result = await processRawMessage(raw, "scott@inspired.co", ["ada@contoso.com"]);
+    const text = result.raw.toString("utf8");
+    expect(text).not.toMatch(/^DKIM-Signature:/im);
+    expect(text).not.toMatch(/^ARC-Seal:/im);
+    expect(text).toMatch(/X-Signer-MessageProcessed: true/i);
+  });
+
   it("does not apply an exception sender", async () => {
     const sig = listSignatures()[0]!;
     saveSignatureRules(sig.id, {

@@ -37,24 +37,26 @@ export const config = {
   failureMode: env("FAILURE_MODE", "fail-open") as "fail-open" | "fail-closed",
   directorySyncMinutes: envInt("DIRECTORY_SYNC_MINUTES", 240),
   smtp: {
-    port: envInt("SMTP_PORT", 25),
+    port: envInt("SMTP_PORT", 0),
     submissionPort: envInt("SMTP_SUBMISSION_PORT", 587),
-    altPort: envInt("SMTP_ALT_PORT", 2525),
+    altPort: envInt("SMTP_ALT_PORT", 0),
     hostname: env("SMTP_HOSTNAME", "signer.local"),
     allowedCidrs: env("SMTP_ALLOWED_CIDRS")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
     tlsCertPath: env("TLS_CERT_PATH"),
-    tlsKeyPath: env("TLS_KEY_PATH")
+    tlsKeyPath: env("TLS_KEY_PATH"),
+    requireTls: envBool("SMTP_REQUIRE_TLS", !envBool("DEMO_MODE", false))
   },
   upstream: {
     host: env("UPSTREAM_HOST"),
-    port: envInt("UPSTREAM_PORT", 25),
+    port: envInt("UPSTREAM_PORT", 587),
     secure: envBool("UPSTREAM_SECURE", false),
     user: env("UPSTREAM_USER"),
     pass: env("UPSTREAM_PASS"),
-    tlsServername: env("UPSTREAM_TLS_SERVERNAME")
+    tlsServername: env("UPSTREAM_TLS_SERVERNAME"),
+    tlsRejectUnauthorized: envBool("UPSTREAM_TLS_REJECT_UNAUTHORIZED", true)
   },
   entra: {
     tenantId: env("ENTRA_TENANT_ID"),
