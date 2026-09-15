@@ -41,6 +41,23 @@ Recipient
 
 The HTTPS portal (admin designer, rules, tester, user details editor) is the same container.
 
+## Where the signature is inserted
+
+On replies and forwards, Signer inserts the signature **immediately under the latest reply** and **before the quoted thread**. It does not append at the end of the conversation, which would stack a new copy on every reply.
+
+Detection is client-markup, not a mailbox API. Each client wraps the previous messages in a quote block; we scan for those markers and take the **earliest match in the body**. Using the first pattern in a fixed list is not enough: a Gmail quote can sit above an Outlook `From:` header deeper in the thread, and a miss used to fall through to `</body>`.
+
+| Client | How we find the latest reply |
+| --- | --- |
+| Gmail / Google Workspace | `gmail_quote`, `gmail_quote_container`, `gmail_attr`; `On … wrote:` |
+| Outlook / Exchange / Microsoft 365 | `#appendonsend`, `#divRplyFwdMsg`, `OutlookMessageHeader`, `-----Original Message-----`, From/Sent headers |
+| Apple Mail / iOS | `<blockquote type="cite">`, `Begin forwarded message:` |
+| Thunderbird | `moz-cite-prefix` |
+| Yahoo / Proton Mail | `yahoo_quoted`, `protonmail_quote` |
+| Outlook rewriting Gmail HTML | same class names with the `x_` prefix Exchange adds |
+
+New messages (no quote markup) still get the signature at the end of the body. Bottom-posted mail — quoted history first, new text after it — is detected by a quote block at the start with real reply text after it, and the signature is placed after that reply.
+
 ---
 
 ## Deploy
