@@ -168,7 +168,6 @@ export async function resolveAllowedCidrs(
   entries: string[],
   lookup: TxtLookup = dnsTxtLookup
 ): Promise<ResolvedRanges> {
-  const resolve = lookup ?? dnsTxtLookup;
   const cache = readCache();
   const result: ResolvedRanges = { cidrs: [], live: [], stale: [], failed: [], invalid: [] };
   const seen = new Set<string>();
@@ -189,7 +188,7 @@ export async function resolveAllowedCidrs(
     }
 
     try {
-      const cidrs = await resolveProvider(provider, resolve);
+      const cidrs = await resolveProvider(provider, lookup);
       cache[provider] = { cidrs, fetchedAt: new Date().toISOString() };
       result.live.push(provider);
       for (const cidr of cidrs) add(cidr);
