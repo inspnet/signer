@@ -5,12 +5,13 @@ import ipaddr from "ipaddr.js";
 import { config } from "../config.js";
 import { logMail } from "../db/index.js";
 import { processRawMessage } from "../mail/process.js";
+import { getAllowedCidrs, initAllowedCidrs, startRangeRefresh } from "./ipranges.js";
 
-function ipAllowed(ip: string): boolean {
-  if (!config.smtp.allowedCidrs.length) return true;
+export function ipAllowed(ip: string, cidrs: string[] = getAllowedCidrs()): boolean {
+  if (!cidrs.length) return true;
   try {
     const addr = ipaddr.process(ip);
-    return config.smtp.allowedCidrs.some((cidr) => {
+    return cidrs.some((cidr) => {
       const [range, bits] = cidr.split("/");
       if (!range) return false;
       const parsed = ipaddr.process(range);
@@ -179,7 +180,18 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
   }
 }
 
-export function startSmtp(): SMTPServer[] {
+export async function startSmtp(): Promise<SMTPServer[]> {
+  const resolved = await initAllowedCidrs();
+  if (resolved.invalid.length) {
+    console.warn(`[signer] Ignoring unrecognised SMTP_ALLOWED_CIDRS entries: ${resolved.invalid.join(", ")}`);
+  }
+  if (resolved.cidrs.length) {
+    const sources = [...resolved.live, ...resolved.stale.map((p) => `${p} (cached)`)];
+    const from = sources.length ? ` from ${sources.join(", ")}` : "";
+    console.log(`[signer] SMTP allowlist: ${resolved.cidrs.length} ranges${from}`);
+  }
+  startRangeRefresh();
+
   const servers: SMTPServer[] = [];
   const ports = [...new Set([config.smtp.port, config.smtp.submissionPort, config.smtp.altPort])].filter((p) => p > 0);
   for (const port of ports) {

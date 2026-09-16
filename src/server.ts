@@ -60,7 +60,7 @@ async function main(): Promise<void> {
   }
 
   await app.listen({ port: config.httpPort, host: "0.0.0.0" });
-  startSmtp();
+  await startSmtp();
 
   if (config.directorySyncMinutes > 0) {
     const ms = config.directorySyncMinutes * 60 * 1000;

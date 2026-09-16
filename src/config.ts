@@ -45,6 +45,7 @@ export const config = {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
+    rangeRefreshMinutes: envInt("SMTP_RANGE_REFRESH_MINUTES", 720),
     tlsCertPath: env("TLS_CERT_PATH"),
     tlsKeyPath: env("TLS_KEY_PATH")
   },
@@ -111,8 +112,9 @@ export function validateConfig(): { fatal: string[]; warnings: string[] } {
   if (!config.smtp.allowedCidrs.length) {
     warnings.push(
       "SMTP_ALLOWED_CIDRS is empty, so any host that can reach the SMTP ports may relay mail through this " +
-        "instance. Set SMTP_ALLOWED_CIDRS to your Microsoft 365 / Google connector ranges, or restrict the " +
-        "ports at the firewall (NSG, VPC firewall, security group)."
+        'instance. Set SMTP_ALLOWED_CIDRS="microsoft" or "google" to track the published sender ranges ' +
+        "automatically, list explicit CIDRs, or restrict the ports at the firewall (NSG, VPC firewall, " +
+        "security group)."
     );
   }
 

@@ -241,7 +241,15 @@ Create a DNS **A record**: `signer.example.com` → that IPv4 address. Wait unti
 
 Leave SSH (22) open to your admin IPs only. For SMTP, prefer Microsoft’s published [Office 365 IP ranges](https://learn.microsoft.com/microsoft-365/enterprise/urls-and-ip-address-ranges) (service `Exchange Online`, TCP 25/587) instead of `0.0.0.0/0`. HTTPS 80/443 can stay world-open for the portal and Let’s Encrypt.
 
-Also set `SMTP_ALLOWED_CIDRS` in `.env` to the same ranges once you know them (comma-separated CIDRs). Leaving it empty means any host that can open a connection may relay mail through this instance, so if you do leave it empty the ports must be closed at the firewall instead. Startup prints a warning while it is unset.
+Also set `SMTP_ALLOWED_CIDRS` in `.env`. Rather than pasting CIDRs, you can name the provider and let Signer track the ranges for you:
+
+```bash
+SMTP_ALLOWED_CIDRS=microsoft          # Microsoft 365 / Exchange Online
+SMTP_ALLOWED_CIDRS=google             # Google Workspace
+SMTP_ALLOWED_CIDRS=microsoft,google,203.0.113.10/32   # mix as needed
+```
+
+See [Provider IP ranges](#provider-ip-ranges) for how that resolves. Leaving it empty means any host that can open a connection may relay mail through this instance, so if you do leave it empty the ports must be closed at the firewall instead. Startup prints a warning while it is unset.
 
 #### 4. SSH in and install Docker
 
@@ -629,6 +637,41 @@ The server validates its configuration before it listens:
 
 Read the deploy log after the first start — every one of these is something that
 will bite later.
+
+## Provider IP ranges
+
+`SMTP_ALLOWED_CIDRS` accepts explicit CIDRs, the names `microsoft` and `google`,
+or any mix of the two. The names resolve from the SPF records the providers
+publish — `spf.protection.outlook.com` and `_spf.google.com` — which list exactly
+the hosts their mail servers send from. Aliases are accepted (`m365`,
+`office365`, `o365`, `exchange`, `outlook`; `workspace`, `gmail`).
+
+SPF is used in preference to Microsoft's `endpoints.office.com` web service
+because it needs only DNS rather than outbound HTTPS, it is one mechanism for
+both providers, and it lists sending hosts rather than every address the service
+uses.
+
+**These ranges cover the provider's whole platform, not your tenant.** Allowing
+`microsoft` means any Microsoft 365 tenant could reach the gateway, not only
+yours. That keeps the open internet out, which is the point of the allowlist, but
+it is not tenant isolation — require TLS on the connector as well.
+
+How it behaves:
+
+- Resolved at startup and re-resolved every `SMTP_RANGE_REFRESH_MINUTES`
+  (default 720, i.e. twice a day; `0` disables the refresh).
+- The answer is cached to `<DATA_DIR>/ip-ranges.cache.json`. If DNS is down at
+  startup, the cached copy is used and a warning is logged.
+- If a name cannot be resolved **and** nothing is cached, the server refuses to
+  start. An unresolved allowlist would otherwise be an empty one, and an empty
+  allowlist accepts mail from anyone — failing to start is the safer outcome.
+- A failed refresh keeps the ranges already in force rather than replacing them
+  with a partial answer.
+- Entries that are neither a provider name nor a valid CIDR are ignored with a
+  warning, not treated as a match.
+
+`GET /api/settings` reports what the allowlist actually resolved to
+(`smtpAllowlist`), so you can confirm the expansion without reading the log.
 
 ## What the gateway does and does not rewrite
 

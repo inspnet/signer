@@ -36,12 +36,36 @@ import {
 } from "../db/index.js";
 import { DIRECTORY_FIELDS } from "../directory/fields.js";
 import { syncDirectory } from "../directory/sync.js";
+import { getRangeStatus } from "../smtp/ipranges.js";
 import { signatureHtml, testSignature } from "../mail/process.js";
 import { defaultProfessionalDesign } from "../mail/templates.js";
 import type { Design } from "../mail/design.js";
 
 /** Roles an admin may hand out through /api/admins. */
 const ASSIGNABLE_ROLES: Role[] = ["owner", "admin", "editor", "designer", "user"];
+
+/**
+ * What the SMTP allowlist actually resolved to, so an admin can confirm the
+ * provider tokens expanded rather than guessing from the deploy log.
+ */
+function smtpAllowlistStatus(): {
+  configured: string[];
+  rangeCount: number;
+  resolvedFrom: string[];
+  usingCache: string[];
+  ignored: string[];
+  openToAll: boolean;
+} {
+  const status = getRangeStatus();
+  return {
+    configured: config.smtp.allowedCidrs,
+    rangeCount: status?.cidrs.length ?? 0,
+    resolvedFrom: status?.live ?? [],
+    usingCache: status?.stale ?? [],
+    ignored: status?.invalid ?? [],
+    openToAll: !(status?.cidrs.length ?? 0)
+  };
+}
 
 export function registerApi(app: FastifyInstance): void {
   app.get("/api/health", async () => ({ ok: true, product: "signer" }));
@@ -335,7 +359,8 @@ export function registerApi(app: FastifyInstance): void {
       upstreamPort: config.upstream.port,
       entraConfigured: entraConfigured(),
       googleConfigured: googleLoginConfigured(),
-      failureMode: config.failureMode
+      failureMode: config.failureMode,
+      smtpAllowlist: smtpAllowlistStatus()
     };
   });
 
