@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { config, ensureDataDir } from "../config.js";
 import { DIRECTORY_FIELDS, emptyUser, type DirectoryUser } from "../directory/fields.js";
+import { detectImage, safeStem } from "../util/uploads.js";
 import type { Design } from "../mail/design.js";
 import { defaultProfessionalDesign } from "../mail/templates.js";
 
@@ -972,12 +973,24 @@ export function mailStats(): {
   return { processed24h, signed24h, failed24h, recent };
 }
 
+/**
+ * Store an uploaded image. The extension comes from the detected format, not
+ * from the supplied filename, so a file cannot be served as a type it is not.
+ * Throws when the bytes are not a supported raster image.
+ */
 export function saveUpload(filename: string, buffer: Buffer): string {
-  const safe = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const stored = `${Date.now()}_${safe}`;
+  const kind = detectImage(buffer);
+  if (!kind) {
+    throw new UnsupportedUploadError(
+      "Only PNG, JPEG, GIF and WEBP images can be uploaded. SVG is rejected because email clients do not render it and it can carry script."
+    );
+  }
+  const stored = `${Date.now()}_${safeStem(filename)}.${kind.ext}`;
   const dest = path.join(config.dataDir, "uploads", stored);
   fs.writeFileSync(dest, buffer);
   return `/uploads/${stored}`;
 }
+
+export class UnsupportedUploadError extends Error {}
 
 export { parseJson };
