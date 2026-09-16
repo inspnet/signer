@@ -96,11 +96,15 @@ export async function syncEntra(): Promise<SyncResult> {
     for (const g of page.value) {
       const gid = `entra:${g.id}`;
       groups.push({ id: gid, name: g.displayName || g.mail || g.id, email: g.mail || "", source: "entra" });
-      const members = await graphGet<{ value: { id: string }[] }>(
-        token,
-        `https://graph.microsoft.com/v1.0/groups/${g.id}/members?$select=id`
-      );
-      for (const m of members.value) memberships.push({ groupId: gid, userId: `entra:${m.id}` });
+      // Graph pages group members (100 at a time by default). Without following
+      // nextLink, every group larger than one page loses the rest of its members
+      // and sender-group rules stop matching for them.
+      let mnext: string | undefined = `https://graph.microsoft.com/v1.0/groups/${g.id}/members?$select=id&$top=999`;
+      while (mnext) {
+        const members: { value: { id: string }[]; "@odata.nextLink"?: string } = await graphGet(token, mnext);
+        for (const m of members.value) memberships.push({ groupId: gid, userId: `entra:${m.id}` });
+        mnext = members["@odata.nextLink"];
+      }
     }
     gnext = page["@odata.nextLink"];
   }

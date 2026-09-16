@@ -9,6 +9,7 @@ import {
   listSignatures,
   listUsers,
   parseJson,
+  type CampaignRecord,
   type RuleSet,
   type SignatureRecord
 } from "../db/index.js";
@@ -183,17 +184,33 @@ export function signatureHtml(sig: SignatureRecord, user: DirectoryUser): string
   return renderDesign(design, user);
 }
 
-function campaignHtml(id: string): string {
-  const camp = listCampaigns().find((x) => x.id === id);
-  if (!camp?.imageUrl) return "";
-  const href = camp.href || "#";
-  return `<a href="${href}"><img src="${camp.imageUrl}" alt="${camp.alt || camp.name}" style="display:block;border:0;margin-top:8px;max-width:460px;" /></a>`;
+/** Only http(s), mailto and tel links belong in a signature; anything else
+ * (javascript:, data:) is dropped rather than rendered into outbound mail. */
+function safeUrl(value: string | null | undefined): string | null {
+  const url = (value || "").trim();
+  if (!url) return null;
+  if (/^(https?:|mailto:|tel:)/i.test(url)) return url;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return null;
+  return url.startsWith("//") ? null : `https://${url}`;
 }
 
-function assembleSnippet(tested: TestResult): string {
+function campaignHtml(camp: CampaignRecord): string {
+  const src = safeUrl(camp.imageUrl);
+  if (!src) return "";
+  const alt = escapeHtmlAttr(camp.alt || camp.name);
+  const img = `<img src="${escapeHtmlAttr(src)}" alt="${alt}" style="display:block;border:0;margin-top:8px;max-width:460px;" />`;
+  const href = safeUrl(camp.href);
+  return href ? `<a href="${escapeHtmlAttr(href)}">${img}</a>` : img;
+}
+
+function assembleSnippet(tested: TestResult, campaigns: CampaignRecord[]): string {
+  const byId = new Map(campaigns.map((c) => [c.id, c]));
   return [
     tested.signature?.html,
-    ...tested.campaigns.map((c) => campaignHtml(c.id)),
+    ...tested.campaigns.map((c) => {
+      const record = byId.get(c.id);
+      return record ? campaignHtml(record) : "";
+    }),
     ...tested.disclaimers.map((d) => d.html)
   ]
     .filter(Boolean)
@@ -209,7 +226,7 @@ export function evaluateMessage(ctx: RuleContext, bodyPreview: string): TestResu
     : null;
   const snippet = [
     signature?.html,
-    ...campEval.chosen.map((c) => campaignHtml(c.id)),
+    ...campEval.chosen.map((c) => campaignHtml(c)),
     ...discEval.chosen.map((d) => d.html)
   ]
     .filter(Boolean)
@@ -240,7 +257,61 @@ function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function escapeHtmlAttr(value: string): string {
+  return escapeHtml(value).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/**
+ * Content types this gateway must not rewrite.
+ *
+ * composeRfc822 rebuilds the message from the parsed text/html bodies plus the
+ * attachment list, which is lossy: any part that is neither text/plain,
+ * text/html nor an attachment is simply gone. For a meeting invite that means
+ * the invite disappears; for signed or encrypted mail it means the signature no
+ * longer verifies or the payload is destroyed. Those messages are relayed
+ * untouched instead — an unsigned message is always better than a broken one.
+ */
+const UNSAFE_TO_REWRITE = [
+  /content-type:\s*text\/calendar/i,
+  /content-type:\s*multipart\/signed/i,
+  /content-type:\s*multipart\/encrypted/i,
+  /content-type:\s*application\/pkcs7-mime/i,
+  /content-type:\s*application\/x-pkcs7-mime/i,
+  /content-type:\s*application\/pgp-encrypted/i,
+  /content-type:\s*multipart\/report/i
+];
+
+function unsafeToRewrite(raw: Buffer): string | null {
+  const text = raw.toString("latin1");
+  for (const re of UNSAFE_TO_REWRITE) {
+    const match = re.exec(text);
+    if (match) return match[0].replace(/\s+/g, " ").trim();
+  }
+  return null;
+}
+
+/**
+ * Add the loop-prevention header to a message that is otherwise passed through
+ * byte for byte, so the connector does not send it back to us. Prepending keeps
+ * the rest of the message — and therefore any DKIM signature over it — intact.
+ */
+export function withProcessedHeader(raw: Buffer): Buffer {
+  const headerLine = Buffer.from(`${config.processedHeader}: true\r\n`, "utf8");
+  return Buffer.concat([headerLine, raw]);
+}
+
 export async function processRawMessage(raw: Buffer, envelopeFrom: string, envelopeTo: string[]): Promise<ProcessResult> {
+  const unsafe = unsafeToRewrite(raw);
+  if (unsafe) {
+    return {
+      raw: withProcessedHeader(raw),
+      signatureId: null,
+      disclaimerIds: [],
+      campaignIds: [],
+      skipped: true,
+      reason: `Passed through untouched: ${unsafe} cannot be rebuilt without losing content`
+    };
+  }
   const parsed = await simpleParser(raw);
   const from = (addressesFrom(parsed.from)[0] || envelopeFrom || "").toLowerCase();
   const to = [...new Set([...envelopeTo.map((e) => e.toLowerCase()), ...addressesFrom(parsed.to)])];
@@ -261,17 +332,31 @@ export async function processRawMessage(raw: Buffer, envelopeFrom: string, envel
     )
   });
   const tested = evaluateMessage(ctx, text);
-  const snippetHtml = assembleSnippet(tested);
-  const nextHtml = snippetHtml ? insertHtml(html || `<div>${escapeHtml(text)}</div>`, snippetHtml) : html;
-  const nextText = snippetHtml ? insertText(text, renderPlainText(snippetHtml)) : text;
+  const snippetHtml = assembleSnippet(tested, listCampaigns());
+
+  // Nothing to add: relay the original bytes rather than recomposing them.
+  // Rebuilding a message we are not changing only risks losing structure.
+  if (!snippetHtml) {
+    return {
+      raw: withProcessedHeader(raw),
+      signatureId: null,
+      disclaimerIds: [],
+      campaignIds: [],
+      skipped: true,
+      reason: "No matching signature, campaign, or disclaimer"
+    };
+  }
+
+  const nextHtml = insertHtml(html || `<div>${escapeHtml(text)}</div>`, snippetHtml);
+  const nextText = insertText(text, renderPlainText(snippetHtml));
   const composed = await composeRfc822(parsed, nextHtml, nextText);
   return {
     raw: composed,
     signatureId: tested.signature?.id ?? null,
     disclaimerIds: tested.disclaimers.map((d) => d.id),
     campaignIds: tested.campaigns.map((c) => c.id),
-    skipped: !snippetHtml,
-    reason: snippetHtml ? "signed" : "No matching signature, campaign, or disclaimer"
+    skipped: false,
+    reason: "signed"
   };
 }
 
@@ -280,34 +365,69 @@ function addressText(value?: AddressObject | AddressObject[]): string | undefine
   return Array.isArray(value) ? value.map((item) => item.text).join(", ") : value.text;
 }
 
+/**
+ * Headers MailComposer sets itself, plus the ones invalidated by rewriting the
+ * body. Everything else is carried over verbatim.
+ *
+ * DKIM signatures are dropped deliberately: the body changed, so the original
+ * signature no longer verifies. Microsoft 365 and Google re-sign the message
+ * when it is returned through their connectors.
+ */
+const REPLACED_HEADERS = new Set([
+  "content-type",
+  "content-transfer-encoding",
+  "content-disposition",
+  "content-id",
+  "content-description",
+  "mime-version",
+  "dkim-signature",
+  "domainkey-signature",
+  "from",
+  "to",
+  "cc",
+  "bcc",
+  "reply-to",
+  "subject",
+  "date",
+  "message-id",
+  "in-reply-to",
+  "references"
+]);
+
+/**
+ * Carry headers across using the raw header lines rather than the parsed
+ * `headers` map. mailparser turns structured headers (Reply-To, Return-Path,
+ * List-*, Received, ...) into objects, and a `typeof value === "string"` filter
+ * silently drops every one of them.
+ */
+function carriedHeaders(parsed: ParsedMail): Array<{ key: string; value: string }> {
+  const carried: Array<{ key: string; value: string }> = [];
+  for (const line of parsed.headerLines || []) {
+    const key = line.key.toLowerCase();
+    if (REPLACED_HEADERS.has(key)) continue;
+    if (key === config.processedHeader.toLowerCase()) continue;
+    const separator = line.line.indexOf(":");
+    if (separator === -1) continue;
+    const value = line.line
+      .slice(separator + 1)
+      .replace(/\r?\n[ \t]+/g, " ")
+      .trim();
+    if (!value) continue;
+    carried.push({ key: line.line.slice(0, separator).trim(), value });
+  }
+  return carried;
+}
+
 async function composeRfc822(parsed: ParsedMail, html: string, text: string): Promise<Buffer> {
   const { default: MailComposer } = await import("nodemailer/lib/mail-composer/index.js");
-  const skip = new Set([
-    "content-type",
-    "content-transfer-encoding",
-    "mime-version",
-    "dkim-signature",
-    "from",
-    "to",
-    "cc",
-    "bcc",
-    "subject",
-    "date",
-    "message-id",
-    "received"
-  ]);
-  const extraHeaders: Array<{ key: string; value: string }> = [];
-  for (const [key, value] of parsed.headers) {
-    if (typeof value === "string" && !skip.has(key.toLowerCase())) {
-      extraHeaders.push({ key, value });
-    }
-  }
+  const extraHeaders = carriedHeaders(parsed);
   extraHeaders.push({ key: config.processedHeader, value: "true" });
   const composer = new MailComposer({
     from: addressText(parsed.from),
     to: addressText(parsed.to),
     cc: addressText(parsed.cc),
     bcc: addressText(parsed.bcc),
+    replyTo: addressText(parsed.replyTo),
     subject: parsed.subject,
     text,
     html: html || undefined,
