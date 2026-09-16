@@ -41,6 +41,7 @@ export type RuleSet = {
     days?: number[];
     startHour?: number | null;
     endHour?: number | null;
+    timezone?: string;
   } | null;
   advanced: {
     subjectContains?: string | null;

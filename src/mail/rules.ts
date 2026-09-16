@@ -91,17 +91,108 @@ function matchesRecipients(rule: RecipientRule | undefined, ctx: RuleContext): {
   return { passed, detail: passed ? "Recipient conditions met" : "Recipient conditions not met", applicable: true };
 }
 
+const WEEKDAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+export function isValidTimezone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type ZonedClock = { day: number; hour: number; minute: number; wallClock: string };
+
+/**
+ * Read the wall clock in a given IANA zone.
+ *
+ * A schedule means what the clock on the wall says where the business is, not
+ * where the server happens to run. Without this, a 09:00-17:00 rule set in
+ * Europe/London silently follows the host's zone — and a container almost
+ * always runs UTC.
+ */
+export function zonedClock(now: Date, timeZone: string): ZonedClock {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(now);
+
+  const value = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const hour = Number.parseInt(value("hour"), 10);
+  const minute = Number.parseInt(value("minute"), 10);
+  return {
+    day: WEEKDAY_INDEX[value("weekday")] ?? 0,
+    hour,
+    minute,
+    // Sortable local wall-clock stamp, same shape a datetime-local input emits.
+    wallClock: `${value("year")}-${value("month")}-${value("day")}T${value("hour")}:${value("minute")}`
+  };
+}
+
+/**
+ * Compare a configured boundary against the current time.
+ *
+ * The portal's datetime-local inputs emit "2026-01-15T09:30" with no zone, so
+ * those are wall-clock values in the rule's timezone and are compared as text.
+ * A value carrying an explicit zone (trailing Z or +/-hh:mm) is an absolute
+ * instant and is compared as one.
+ *
+ * A date-only boundary names a whole day, so an end date is inclusive: "ends
+ * 2026-01-15" means through the end of the 15th, not midnight as it begins.
+ */
+function compareBoundary(boundary: string, now: Date, clock: ZonedClock, edge: "start" | "end"): number {
+  const trimmed = boundary.trim();
+  if (/([zZ]|[+-]\d{2}:?\d{2})$/.test(trimmed)) {
+    const instant = new Date(trimmed).getTime();
+    if (Number.isNaN(instant)) return 0;
+    return now.getTime() - instant;
+  }
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
+  const normalized = dateOnly ? `${trimmed}T${edge === "end" ? "23:59" : "00:00"}` : trimmed;
+  const left = clock.wallClock;
+  const right = normalized.slice(0, left.length).padEnd(left.length, "0");
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function matchesDateTime(rule: DateTimeRule | null | undefined, now: Date): { passed: boolean; detail: string; applicable: boolean } {
   if (!rule) return { passed: true, detail: "Always active", applicable: false };
-  if (rule.start && now < new Date(rule.start)) return { passed: false, detail: "Before start date", applicable: true };
-  if (rule.end && now > new Date(rule.end)) return { passed: false, detail: "After end date", applicable: true };
-  if (rule.days?.length && !rule.days.includes(now.getDay())) {
-    return { passed: false, detail: "Day of week not in schedule", applicable: true };
+
+  const requested = rule.timezone?.trim();
+  const zone = requested && isValidTimezone(requested) ? requested : serverTimezone();
+  const zoneNote = requested && zone !== requested ? ` (unknown timezone "${requested}", used ${zone})` : "";
+  const clock = zonedClock(now, zone);
+
+  if (rule.start && compareBoundary(rule.start, now, clock, "start") < 0) {
+    return { passed: false, detail: `Before start date${zoneNote}`, applicable: true };
   }
-  const hour = now.getHours();
-  if (rule.startHour != null && hour < rule.startHour) return { passed: false, detail: "Before start hour", applicable: true };
-  if (rule.endHour != null && hour >= rule.endHour) return { passed: false, detail: "After end hour", applicable: true };
-  return { passed: true, detail: "Within date/time window", applicable: true };
+  if (rule.end && compareBoundary(rule.end, now, clock, "end") > 0) {
+    return { passed: false, detail: `After end date${zoneNote}`, applicable: true };
+  }
+  if (rule.days?.length && !rule.days.includes(clock.day)) {
+    return { passed: false, detail: `Day of week not in schedule${zoneNote}`, applicable: true };
+  }
+  if (rule.startHour != null && clock.hour < rule.startHour) {
+    return { passed: false, detail: `Before start hour${zoneNote}`, applicable: true };
+  }
+  if (rule.endHour != null && clock.hour >= rule.endHour) {
+    return { passed: false, detail: `After end hour${zoneNote}`, applicable: true };
+  }
+  return { passed: true, detail: `Within date/time window (${zone})`, applicable: true };
+}
+
+function serverTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
 }
 
 function contains(haystack: string, needle: string | null | undefined): boolean {

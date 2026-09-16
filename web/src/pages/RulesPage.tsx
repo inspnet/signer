@@ -3,6 +3,24 @@ import { Link, useParams } from "react-router-dom";
 import { api, type RuleSet, type Signature } from "../api/client";
 
 const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const hours = Array.from({ length: 24 }, (_, i) => i);
+
+const browserTimezone = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+})();
+
+/** Full IANA list where the browser exposes it, with a usable fallback. */
+const timezones = (() => {
+  const supported =
+    typeof Intl.supportedValuesOf === "function"
+      ? (Intl.supportedValuesOf("timeZone") as string[])
+      : ["UTC", "Europe/London", "Europe/Dublin", "Europe/Paris", "Europe/Berlin", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "Asia/Singapore", "Asia/Tokyo", "Australia/Sydney"];
+  return [...new Set([browserTimezone, "UTC", ...supported])];
+})();
 
 export function RulesPage() {
   const { id } = useParams();
@@ -82,7 +100,9 @@ export function RulesPage() {
               <input
                 type="checkbox"
                 checked={Boolean(rules.dateTime)}
-                onChange={(e) => patch({ dateTime: e.target.checked ? { days: [1, 2, 3, 4, 5] } : null })}
+                onChange={(e) =>
+                  patch({ dateTime: e.target.checked ? { days: [1, 2, 3, 4, 5], timezone: browserTimezone } : null })
+                }
               />
               Limit to a schedule
             </label>
@@ -113,6 +133,69 @@ export function RulesPage() {
                     </label>
                   ))}
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block text-sm">
+                    From hour
+                    <select
+                      className="input mt-1"
+                      value={rules.dateTime.startHour ?? ""}
+                      onChange={(e) =>
+                        patch({
+                          dateTime: {
+                            ...rules.dateTime!,
+                            startHour: e.target.value === "" ? null : Number(e.target.value)
+                          }
+                        })
+                      }
+                    >
+                      <option value="">Any</option>
+                      {hours.map((h) => (
+                        <option key={h} value={h}>
+                          {String(h).padStart(2, "0")}:00
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block text-sm">
+                    Until hour
+                    <select
+                      className="input mt-1"
+                      value={rules.dateTime.endHour ?? ""}
+                      onChange={(e) =>
+                        patch({
+                          dateTime: {
+                            ...rules.dateTime!,
+                            endHour: e.target.value === "" ? null : Number(e.target.value)
+                          }
+                        })
+                      }
+                    >
+                      <option value="">Any</option>
+                      {hours.map((h) => (
+                        <option key={h} value={h}>
+                          {String(h).padStart(2, "0")}:00
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label className="block text-sm">
+                  Timezone
+                  <select
+                    className="input mt-1"
+                    value={rules.dateTime.timezone || browserTimezone}
+                    onChange={(e) => patch({ dateTime: { ...rules.dateTime!, timezone: e.target.value } })}
+                  >
+                    {timezones.map((tz) => (
+                      <option key={tz} value={tz}>
+                        {tz}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="block mt-1 text-xs text-slate-500">
+                    Dates, days and hours above are read in this timezone.
+                  </span>
+                </label>
               </>
             )}
           </>

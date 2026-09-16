@@ -36,6 +36,13 @@ export const config = {
   processedHeader: env("PROCESSED_HEADER", "X-Signer-MessageProcessed"),
   failureMode: env("FAILURE_MODE", "fail-open") as "fail-open" | "fail-closed",
   directorySyncMinutes: envInt("DIRECTORY_SYNC_MINUTES", 240),
+  auth: {
+    /** Sign-in attempts allowed per client IP per window. */
+    rateLimitMax: envInt("AUTH_RATE_LIMIT_MAX", 20),
+    rateLimitWindowMinutes: envInt("AUTH_RATE_LIMIT_WINDOW_MINUTES", 5),
+    /** How long a provider's OIDC discovery document is reused. */
+    discoveryCacheMinutes: envInt("OIDC_DISCOVERY_CACHE_MINUTES", 60)
+  },
   smtp: {
     port: envInt("SMTP_PORT", 25),
     submissionPort: envInt("SMTP_SUBMISSION_PORT", 587),

@@ -29,6 +29,7 @@ import {
   setFieldPermissions,
   setSetting,
   setUserOverrides,
+  UnsupportedUploadError,
   defaultRules,
   type Role,
   type RuleSet,
@@ -445,8 +446,14 @@ export function registerApi(app: FastifyInstance): void {
     const file = await req.file();
     if (!file) return reply.code(400).send({ error: "No file" });
     const buffer = await file.toBuffer();
-    const url = saveUpload(file.filename, buffer);
-    return { url };
+    try {
+      const url = saveUpload(file.filename, buffer);
+      audit(user.email, "upload", url);
+      return { url };
+    } catch (err) {
+      if (err instanceof UnsupportedUploadError) return reply.code(415).send({ error: err.message });
+      throw err;
+    }
   });
 
 }

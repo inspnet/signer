@@ -108,17 +108,56 @@ function readPkceCookie(raw: string | undefined, provider: string): PkceState | 
   return parsed;
 }
 
+/**
+ * OIDC discovery is an outbound HTTPS request, and the routes that need it are
+ * unauthenticated — without caching, anyone can make this server hammer the
+ * identity provider one request at a time. The document changes rarely, so it is
+ * reused for OIDC_DISCOVERY_CACHE_MINUTES. A failed discovery is not cached.
+ */
+type DiscoveryEntry = { config: client.Configuration; fetchedAt: number };
+const discoveryCache = new Map<string, DiscoveryEntry>();
+
+async function cachedDiscovery(
+  key: string,
+  discover: () => Promise<client.Configuration>
+): Promise<client.Configuration> {
+  const ttl = config.auth.discoveryCacheMinutes * 60 * 1000;
+  const entry = discoveryCache.get(key);
+  if (entry && ttl > 0 && Date.now() - entry.fetchedAt < ttl) return entry.config;
+  const discovered = await discover();
+  discoveryCache.set(key, { config: discovered, fetchedAt: Date.now() });
+  return discovered;
+}
+
 async function entraConfig(): Promise<client.Configuration> {
-  return client.discovery(
-    new URL(`https://login.microsoftonline.com/${config.entra.tenantId}/v2.0`),
-    config.entra.clientId,
-    config.entra.clientSecret
+  return cachedDiscovery("entra", () =>
+    client.discovery(
+      new URL(`https://login.microsoftonline.com/${config.entra.tenantId}/v2.0`),
+      config.entra.clientId,
+      config.entra.clientSecret
+    )
   );
 }
 
 async function googleConfig(): Promise<client.Configuration> {
-  return client.discovery(new URL("https://accounts.google.com"), config.google.clientId, config.google.clientSecret);
+  return cachedDiscovery("google", () =>
+    client.discovery(new URL("https://accounts.google.com"), config.google.clientId, config.google.clientSecret)
+  );
 }
+
+/**
+ * Sign-in routes are unauthenticated and each one costs a token exchange or a
+ * provider round trip, so they are capped per client IP. /api/auth/me and
+ * /api/auth/providers are deliberately left uncapped: the portal polls them.
+ */
+const authRateLimit = {
+  config: {
+    rateLimit: {
+      max: config.auth.rateLimitMax,
+      timeWindow: config.auth.rateLimitWindowMinutes * 60 * 1000
+    }
+  }
+};
 
 export function registerAuthRoutes(app: FastifyInstance): void {
   app.get("/api/auth/providers", async () => ({
@@ -130,7 +169,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
 
   app.get("/api/auth/me", async (req) => ({ user: req.user }));
 
-  app.post("/api/auth/dev-login", async (req, reply) => {
+  app.post("/api/auth/dev-login", authRateLimit, async (req, reply) => {
     if (!(config.allowDevLogin && config.demoMode)) {
       return reply.code(403).send({ error: "Dev login is disabled" });
     }
@@ -151,7 +190,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     return { ok: true };
   });
 
-  app.get("/api/auth/entra/start", async (_req, reply) => {
+  app.get("/api/auth/entra/start", authRateLimit, async (_req, reply) => {
     if (!entraConfigured()) return reply.code(400).send({ error: "Entra is not configured" });
     const oidc = await entraConfig();
     const codeVerifier = client.randomPKCECodeVerifier();
@@ -174,7 +213,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     return reply.redirect(url.href);
   });
 
-  app.get("/api/auth/entra/callback", async (req, reply) => {
+  app.get("/api/auth/entra/callback", authRateLimit, async (req, reply) => {
     const oidc = await entraConfig();
     const stored = readPkceCookie(req.cookies[pkceCookie], "entra");
     if (!stored) {
@@ -200,7 +239,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     return reply.redirect("/");
   });
 
-  app.get("/api/auth/google/start", async (_req, reply) => {
+  app.get("/api/auth/google/start", authRateLimit, async (_req, reply) => {
     if (!googleLoginConfigured()) return reply.code(400).send({ error: "Google is not configured" });
     const oidc = await googleConfig();
     const codeVerifier = client.randomPKCECodeVerifier();
@@ -223,7 +262,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     return reply.redirect(url.href);
   });
 
-  app.get("/api/auth/google/callback", async (req, reply) => {
+  app.get("/api/auth/google/callback", authRateLimit, async (req, reply) => {
     const oidc = await googleConfig();
     const stored = readPkceCookie(req.cookies[pkceCookie], "google");
     if (!stored) {

@@ -673,6 +673,50 @@ How it behaves:
 `GET /api/settings` reports what the allowlist actually resolved to
 (`smtpAllowlist`), so you can confirm the expansion without reading the log.
 
+## Portal hardening
+
+**Uploads.** Signature artwork is served from the same origin as the portal, so
+a file a browser treats as a document is stored XSS against every admin who
+opens it. Uploads are therefore identified by their magic bytes, not by the
+filename or the browser-supplied content type, and only PNG, JPEG, GIF and WEBP
+are accepted. The stored extension comes from the detected format, so a file
+cannot be served as something it is not.
+
+SVG is rejected outright. That costs nothing — Gmail, Outlook and Apple Mail do
+not render SVG in `<img>` — and it removes the only image format that can carry
+script.
+
+Everything under `/uploads/` is served with `X-Content-Type-Options: nosniff` and
+a `default-src 'none'; ... sandbox` CSP, and anything that is not a recognised
+raster image is sent as `Content-Disposition: attachment`. That last part covers
+files uploaded before this validation existed, which are still on disk.
+
+**Sign-in rate limiting.** The routes that start or complete a login are capped
+per client IP (`AUTH_RATE_LIMIT_MAX` per `AUTH_RATE_LIMIT_WINDOW_MINUTES`,
+default 20 per 5 minutes). `/api/auth/me` and `/api/auth/providers` are left
+uncapped because the portal polls them. Behind a proxy this relies on
+`X-Forwarded-For`, which the server already trusts.
+
+OIDC discovery documents are cached for `OIDC_DISCOVERY_CACHE_MINUTES` (default
+60). Without that, every hit on an unauthenticated sign-in route made this server
+issue an outbound request to the identity provider.
+
+## Schedules and timezones
+
+A signature limited to a schedule is evaluated against the wall clock in the
+timezone chosen on the rule, not the server's. A container almost always runs
+UTC, so a 09:00–17:00 rule set by a London office would otherwise drift by an
+hour for half the year and be plain wrong elsewhere.
+
+- Days of the week and working hours are read in the rule's timezone.
+- Start and end values from the portal's date pickers are wall-clock times in
+  that timezone. A value carrying an explicit offset (`Z` or `+01:00`) is treated
+  as an absolute instant instead.
+- A date-only end is inclusive: "ends 2026-01-15" runs through the end of the
+  15th.
+- An unrecognised timezone falls back to the server's and says so in the rule
+  tester, rather than dropping the schedule.
+
 ## What the gateway does and does not rewrite
 
 Applying a signature means rebuilding the message from its text and HTML bodies
