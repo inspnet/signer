@@ -6,14 +6,25 @@ import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
-import { config } from "./config.js";
+import { config, validateConfig } from "./config.js";
 import { initDb } from "./db/index.js";
 import { authPlugin, registerAuthRoutes } from "./auth/index.js";
 import { registerApi } from "./routes/api.js";
 import { startSmtp } from "./smtp/server.js";
 import { syncDirectory } from "./directory/sync.js";
 
+function reportConfig(): void {
+  const { fatal, warnings } = validateConfig();
+  for (const warning of warnings) console.warn(`[signer] WARNING: ${warning}`);
+  if (fatal.length) {
+    for (const problem of fatal) console.error(`[signer] FATAL: ${problem}`);
+    console.error("[signer] Refusing to start with an unsafe configuration. Set DEMO_MODE=true for a lab instance.");
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
+  reportConfig();
   initDb();
   const app = Fastify({ logger: true, trustProxy: true });
   await app.register(cookie);

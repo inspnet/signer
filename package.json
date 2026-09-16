@@ -31,10 +31,7 @@
     "mailparser": "^3.7.2",
     "nodemailer": "^6.10.1",
     "openid-client": "^6.5.0",
-    "qrcode": "^1.5.4",
-    "smtp-server": "^3.13.6",
-    "undici": "^7.10.0",
-    "zod": "^3.25.56"
+    "smtp-server": "^3.13.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -42,7 +39,6 @@
     "@types/mailparser": "^3.4.5",
     "@types/node": "^22.15.21",
     "@types/nodemailer": "^6.4.17",
-    "@types/qrcode": "^1.5.5",
     "@types/smtp-server": "^3.5.10",
     "concurrently": "^9.1.2",
     "tsx": "^4.19.4",

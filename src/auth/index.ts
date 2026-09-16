@@ -7,7 +7,14 @@ import { config, entraConfigured, googleLoginConfigured } from "../config.js";
 import { resolveRole, type SessionUser } from "../db/index.js";
 
 const cookieName = "signer_session";
-const secret = new Uint8Array(createHash("sha256").update(config.sessionSecret).digest());
+
+/**
+ * A missing SESSION_SECRET is fatal outside demo mode (see validateConfig). In
+ * demo mode we fall back to a random per-process key rather than a shared
+ * constant, so a forgotten secret can never be guessed from the source.
+ */
+const secretSource = config.sessionSecret || randomBytes(48).toString("base64");
+const secret = new Uint8Array(createHash("sha256").update(secretSource).digest());
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -79,6 +86,28 @@ export function requireRole(roles: SessionUser["role"][], req: FastifyRequest, r
 
 const pkceCookie = "signer_pkce";
 
+type PkceState = { codeVerifier?: string; state?: string; provider?: string };
+
+/**
+ * The PKCE cookie is attacker-supplied input: it can be absent, truncated, or
+ * malformed. JSON.parse on it unguarded turns a bad cookie into a 500 from the
+ * login callback, and a missing state would otherwise be passed to
+ * authorizationCodeGrant as undefined.
+ */
+function readPkceCookie(raw: string | undefined, provider: string): PkceState | null {
+  if (!raw) return null;
+  let parsed: PkceState;
+  try {
+    parsed = JSON.parse(raw) as PkceState;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  if (!parsed.codeVerifier || !parsed.state) return null;
+  if (parsed.provider !== provider) return null;
+  return parsed;
+}
+
 async function entraConfig(): Promise<client.Configuration> {
   return client.discovery(
     new URL(`https://login.microsoftonline.com/${config.entra.tenantId}/v2.0`),
@@ -139,6 +168,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       httpOnly: true,
       sameSite: "lax",
       path: "/",
+      secure: config.publicUrl.startsWith("https"),
       maxAge: 600
     });
     return reply.redirect(url.href);
@@ -146,7 +176,11 @@ export function registerAuthRoutes(app: FastifyInstance): void {
 
   app.get("/api/auth/entra/callback", async (req, reply) => {
     const oidc = await entraConfig();
-    const stored = JSON.parse(req.cookies[pkceCookie] || "{}") as { codeVerifier?: string; state?: string };
+    const stored = readPkceCookie(req.cookies[pkceCookie], "entra");
+    if (!stored) {
+      reply.clearCookie(pkceCookie, { path: "/" });
+      return reply.code(400).send({ error: "Login session expired or invalid. Start the sign-in again." });
+    }
     const current = new URL(req.url, config.publicUrl);
     const tokens = await client.authorizationCodeGrant(oidc, current, {
       pkceCodeVerifier: stored.codeVerifier,
@@ -183,6 +217,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       httpOnly: true,
       sameSite: "lax",
       path: "/",
+      secure: config.publicUrl.startsWith("https"),
       maxAge: 600
     });
     return reply.redirect(url.href);
@@ -190,7 +225,11 @@ export function registerAuthRoutes(app: FastifyInstance): void {
 
   app.get("/api/auth/google/callback", async (req, reply) => {
     const oidc = await googleConfig();
-    const stored = JSON.parse(req.cookies[pkceCookie] || "{}") as { codeVerifier?: string; state?: string };
+    const stored = readPkceCookie(req.cookies[pkceCookie], "google");
+    if (!stored) {
+      reply.clearCookie(pkceCookie, { path: "/" });
+      return reply.code(400).send({ error: "Login session expired or invalid. Start the sign-in again." });
+    }
     const current = new URL(req.url, config.publicUrl);
     const tokens = await client.authorizationCodeGrant(oidc, current, {
       pkceCodeVerifier: stored.codeVerifier,

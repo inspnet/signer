@@ -22,14 +22,20 @@ function ipAllowed(ip: string): boolean {
   }
 }
 
+let cachedTls: { key?: Buffer; cert?: Buffer } | null = null;
+
+/** Read once: createServer consults this several times per listener. */
 function tlsOptions(): { key?: Buffer; cert?: Buffer } {
+  if (cachedTls) return cachedTls;
   if (config.smtp.tlsCertPath && config.smtp.tlsKeyPath && fs.existsSync(config.smtp.tlsCertPath)) {
-    return {
+    cachedTls = {
       key: fs.readFileSync(config.smtp.tlsKeyPath),
       cert: fs.readFileSync(config.smtp.tlsCertPath)
     };
+  } else {
+    cachedTls = {};
   }
-  return {};
+  return cachedTls;
 }
 
 async function relayUpstream(raw: Buffer, envelopeFrom: string, envelopeTo: string[]): Promise<void> {
@@ -42,7 +48,7 @@ async function relayUpstream(raw: Buffer, envelopeFrom: string, envelopeTo: stri
     secure: config.upstream.secure,
     tls: {
       servername: config.upstream.tlsServername || config.upstream.host,
-      rejectUnauthorized: false
+      rejectUnauthorized: config.upstream.tlsRejectUnauthorized
     },
     auth: config.upstream.user
       ? { user: config.upstream.user, pass: config.upstream.pass }
@@ -96,12 +102,27 @@ function createServer(banner: string): SMTPServer {
   });
 }
 
+/**
+ * Detect the loop-prevention header in the *header block* only.
+ *
+ * Searching the whole message matches the header name wherever it appears —
+ * including quoted documentation, a forwarded message, or a base64 attachment
+ * that happens to decode to it — and any such message would silently go
+ * unsigned. The header block ends at the first blank line.
+ */
+export function hasProcessedHeader(raw: Buffer): boolean {
+  const text = raw.toString("latin1");
+  const blankLine = text.search(/\r?\n\r?\n/);
+  const headerBlock = blankLine === -1 ? text : text.slice(0, blankLine);
+  const name = config.processedHeader.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${name}:[ \t]*true[ \t]*$`, "im").test(headerBlock.replace(/\r?\n[ \t]+/g, " "));
+}
+
 async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<void> {
   const started = Date.now();
   const envelopeFrom = session.envelope.mailFrom ? session.envelope.mailFrom.address : "";
   const envelopeTo = session.envelope.rcptTo.map((r) => r.address);
-  const headerName = config.processedHeader.toLowerCase();
-  if (raw.toString("utf8").toLowerCase().includes(`${headerName.toLowerCase()}: true`)) {
+  if (hasProcessedHeader(raw)) {
     await relayUpstream(raw, envelopeFrom, envelopeTo);
     logMail({
       messageId: "",

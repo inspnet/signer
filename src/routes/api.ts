@@ -40,9 +40,8 @@ import { signatureHtml, testSignature } from "../mail/process.js";
 import { defaultProfessionalDesign } from "../mail/templates.js";
 import type { Design } from "../mail/design.js";
 
-function canManage(role: Role): boolean {
-  return ["super_admin", "owner", "admin", "editor"].includes(role);
-}
+/** Roles an admin may hand out through /api/admins. */
+const ASSIGNABLE_ROLES: Role[] = ["owner", "admin", "editor", "designer", "user"];
 
 export function registerApi(app: FastifyInstance): void {
   app.get("/api/health", async () => ({ ok: true, product: "signer" }));
@@ -311,6 +310,14 @@ export function registerApi(app: FastifyInstance): void {
     const body = req.body as { email?: string; role?: Role };
     if (!body.email || !body.role) return reply.code(400).send({ error: "email and role required" });
     if (body.role === "super_admin") return reply.code(400).send({ error: "super_admin is controlled by SUPER_ADMIN_EMAIL" });
+    if (!ASSIGNABLE_ROLES.includes(body.role)) {
+      return reply.code(400).send({ error: `role must be one of: ${ASSIGNABLE_ROLES.join(", ")}` });
+    }
+    // Owner outranks admin, and requireRole grants owners everything. Only a
+    // super admin may create one, otherwise any admin could promote themselves.
+    if (body.role === "owner" && user.role !== "super_admin") {
+      return reply.code(403).send({ error: "Only the super admin can grant the owner role" });
+    }
     setAdminRole(body.email, body.role, user.email);
     audit(user.email, "set_role", body.email, body.role);
     return { ok: true };
@@ -417,5 +424,4 @@ export function registerApi(app: FastifyInstance): void {
     return { url };
   });
 
-  void canManage;
 }

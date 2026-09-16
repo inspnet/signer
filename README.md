@@ -241,7 +241,7 @@ Create a DNS **A record**: `signer.example.com` → that IPv4 address. Wait unti
 
 Leave SSH (22) open to your admin IPs only. For SMTP, prefer Microsoft’s published [Office 365 IP ranges](https://learn.microsoft.com/microsoft-365/enterprise/urls-and-ip-address-ranges) (service `Exchange Online`, TCP 25/587) instead of `0.0.0.0/0`. HTTPS 80/443 can stay world-open for the portal and Let’s Encrypt.
 
-Also set `SMTP_ALLOWED_CIDRS` in `.env` to the same ranges once you know them (comma-separated CIDRs). Empty means the SMTP banner accepts everyone — lab only.
+Also set `SMTP_ALLOWED_CIDRS` in `.env` to the same ranges once you know them (comma-separated CIDRs). Leaving it empty means any host that can open a connection may relay mail through this instance, so if you do leave it empty the ports must be closed at the firewall instead. Startup prints a warning while it is unset.
 
 #### 4. SSH in and install Docker
 
@@ -614,3 +614,41 @@ docker run --rm -p 3000:3000 -p 587:587 -p 2525:2525 \
 ## Configuration reference
 
 See `.env.example`. Important keys: `PUBLIC_URL`, `SUPER_ADMIN_EMAIL`, `SESSION_SECRET`, `SMTP_*`, `UPSTREAM_*`, `PROCESSED_HEADER`, `FAILURE_MODE` (`fail-open` delivers unsigned mail if processing throws; `fail-closed` defers with 4xx).
+
+### Startup checks
+
+The server validates its configuration before it listens:
+
+- **`SESSION_SECRET` is required.** Without it the process exits, because session
+  cookies would otherwise be signed with a key an attacker could guess. In
+  `DEMO_MODE` a random per-process key is used instead, so sessions end at
+  restart.
+- Warnings (printed, not fatal) cover an empty `SMTP_ALLOWED_CIDRS`, disabled
+  upstream TLS verification, `DEMO_MODE`, a missing `UPSTREAM_HOST`, a missing
+  `SUPER_ADMIN_EMAIL`, and having no login provider configured.
+
+Read the deploy log after the first start — every one of these is something that
+will bite later.
+
+## What the gateway does and does not rewrite
+
+Applying a signature means rebuilding the message from its text and HTML bodies
+plus its attachments, so a few classes of mail are relayed **untouched** rather
+than risk destroying them:
+
+- `text/calendar` parts — meeting invites
+- `multipart/signed` and `multipart/encrypted` — S/MIME and PGP
+- `application/pkcs7-mime`, `application/pgp-encrypted`
+- `multipart/report` — delivery status and bounce notifications
+- any message where no signature, disclaimer or campaign matches
+
+These still get the loop-prevention header so the connector does not send them
+back, but the body is passed through byte for byte. **Meeting invites therefore
+do not carry a signature.**
+
+For messages that are rewritten, the original headers are carried over verbatim
+with two deliberate exceptions: the headers that describe the body
+(`Content-Type`, `Content-Transfer-Encoding`, `MIME-Version`) are regenerated,
+and `DKIM-Signature` is dropped because the body changed and the old signature no
+longer verifies. Microsoft 365 and Google re-sign the message when it returns
+through their connectors, which is why the return path must go back through them.
