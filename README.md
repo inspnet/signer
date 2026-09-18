@@ -283,6 +283,9 @@ SMTP_HOSTNAME=signer.example.com
 SMTP_PORT=25
 SMTP_SUBMISSION_PORT=587
 # Exchange Online delivers to smart hosts on 25. Uncomment 25:25 in docker-compose.yml.
+# Only accept mail from the ranges Microsoft publishes for Exchange Online.
+# Resolved from DNS at startup and refreshed twice a day.
+SMTP_ALLOWED_CIDRS=microsoft
 
 # After signing, hand mail back to your tenant MX (needs outbound 25 or an exemption):
 UPSTREAM_HOST=yourtenant-com.mail.protection.outlook.com
@@ -434,6 +437,9 @@ SESSION_SECRET=<openssl rand -base64 48>
 SMTP_HOSTNAME=signer.example.com
 SMTP_PORT=25
 SMTP_SUBMISSION_PORT=587
+# Only accept mail from the ranges Google publishes for Workspace.
+# Resolved from DNS at startup and refreshed twice a day.
+SMTP_ALLOWED_CIDRS=google
 
 # Return path — do not rely on outbound 25:
 UPSTREAM_HOST=smtp-relay.gmail.com
@@ -581,18 +587,25 @@ Copy `signer-data.tgz` off the VM. Restore by extracting into the same volume be
 - Connector loop → transport rule / content compliance must skip when the processed header is `true`.
 - Mail accepted by Signer, never arrives → outbound 25 blocked; confirm `UPSTREAM_*` and cloud SMTP policy.
 - Empty signature fields → run directory sync; users only exist in the cache after Entra/Google sync (or demo seed).
+- **Container exits immediately on start** → read the log. `SESSION_SECRET is not set` is fatal outside demo mode, and so is a `SMTP_ALLOWED_CIDRS` provider name that cannot be resolved with nothing cached (see [Provider IP ranges](#provider-ip-ranges)).
+- **Relay fails with a certificate error** → upstream TLS is verified by default. Against a real `mail.protection.outlook.com` or `smtp-relay.gmail.com` this means the hostname or `UPSTREAM_TLS_SERVERNAME` is wrong. Only set `UPSTREAM_TLS_REJECT_UNAUTHORIZED=false` for a lab host with a self-signed certificate — it lets anyone on the network path read and alter the mail.
+- **Exchange or Gmail cannot connect at all** → if `SMTP_ALLOWED_CIDRS` is set, the connecting host is outside it. `GET /api/settings` shows what the allowlist resolved to.
+- **Logo upload rejected with 415** → only PNG, JPEG, GIF and WEBP are accepted, and the file is checked by its contents, not its extension. SVG is refused deliberately: email clients do not render it (see [Portal hardening](#portal-hardening)).
+- **Sign-in returns 429** → the per-IP limit on sign-in routes. Behind a proxy this keys off `X-Forwarded-For`, so a proxy that does not set it makes every user share one bucket.
+- **A schedule fires at the wrong time** → set the timezone on the rule. Without one it follows the server's zone, which in a container is UTC (see [Schedules and timezones](#schedules-and-timezones)).
 
 ---
 
 ## Product surface
 
 - **Signatures** — create, folders, evaluation order, block designer, HTML fields from the directory
-- **Rules** — senders, exceptions, groups/domains, internal vs external recipients, date/time, reply/thread advanced rules
+- **Rules** — senders, exceptions, groups/domains, internal vs external recipients, date/time with a per-rule timezone, reply/thread advanced rules
 - **Disclaimers** — separate legal notices (e.g. external-only confidentiality)
 - **Campaigns** — banner images with the same rule engine
 - **Rule tester** — dry-run with per-rule pass/fail (does not send mail)
 - **User details** — employees edit only admin-unlocked fields
-- **RBAC** — owner / admin / editor / designer / user
+- **RBAC** — owner / admin / editor / designer / user. Admins manage roles, but only `SUPER_ADMIN_EMAIL` can grant `owner`
+- **Uploads** — PNG, JPEG, GIF and WEBP artwork, validated by file contents rather than extension
 - **Analytics** — counts and metadata; message bodies are not stored
 
 ## Local development
@@ -621,7 +634,22 @@ docker run --rm -p 3000:3000 -p 587:587 -p 2525:2525 \
 
 ## Configuration reference
 
-See `.env.example`. Important keys: `PUBLIC_URL`, `SUPER_ADMIN_EMAIL`, `SESSION_SECRET`, `SMTP_*`, `UPSTREAM_*`, `PROCESSED_HEADER`, `FAILURE_MODE` (`fail-open` delivers unsigned mail if processing throws; `fail-closed` defers with 4xx).
+See `.env.example` for the full list with comments. The keys that matter most:
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `PUBLIC_URL` | `http://localhost:3000` | Must match the OIDC redirect URI exactly, no trailing slash |
+| `SUPER_ADMIN_EMAIL` | — | Break-glass owner; the only account that can grant the `owner` role |
+| `SESSION_SECRET` | — | **Required.** The server exits without it unless `DEMO_MODE=true` |
+| `SMTP_ALLOWED_CIDRS` | empty | CIDRs, or `microsoft` / `google`. Empty accepts mail from anyone |
+| `SMTP_RANGE_REFRESH_MINUTES` | `720` | How often provider ranges are re-resolved; `0` disables |
+| `UPSTREAM_HOST` / `UPSTREAM_PORT` | — / `25` | Where signed mail is handed back |
+| `UPSTREAM_TLS_REJECT_UNAUTHORIZED` | `true` | Verify the upstream certificate. Only turn off for a lab host with a self-signed cert |
+| `PROCESSED_HEADER` | `X-Signer-MessageProcessed` | Must match the connector rule that skips already-processed mail |
+| `FAILURE_MODE` | `fail-open` | `fail-open` delivers unsigned if processing throws; `fail-closed` defers with 4xx |
+| `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW_MINUTES` | `20` / `5` | Sign-in attempts per client IP per window |
+| `OIDC_DISCOVERY_CACHE_MINUTES` | `60` | How long a provider's discovery document is reused; `0` disables |
+| `DEMO_MODE` | `false` | Seeds sample data and allows dev login. Never enable on an instance handling real mail |
 
 ### Startup checks
 
