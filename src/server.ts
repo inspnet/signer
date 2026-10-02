@@ -28,7 +28,7 @@ function reportConfig(): void {
 async function main(): Promise<void> {
   reportConfig();
   initDb();
-  const app = Fastify({ logger: true, trustProxy: true });
+  const app = Fastify({ logger: true, trustProxy: config.trustProxy });
   await app.register(cookie);
   await app.register(cors, {
     origin: [config.publicUrl, ...config.corsOrigins],
@@ -73,7 +73,7 @@ async function main(): Promise<void> {
     });
   }
 
-  await app.listen({ port: config.httpPort, host: "0.0.0.0" });
+  await app.listen({ port: config.httpPort, host: config.httpHost });
   await startSmtp();
 
   if (config.directorySyncMinutes > 0) {

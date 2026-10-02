@@ -25,7 +25,7 @@ ENV SMTP_SUBMISSION_PORT=587
 ENV SMTP_ALT_PORT=2525
 EXPOSE 3000 25 587 2525
 VOLUME ["/data"]
-# Root is required to bind SMTP port 25. Restrict the container with a network
-# policy / NSG so only Microsoft 365 and Google mail hosts can reach it.
+# Root inside the container binds SMTP port 25. Limit who can connect with
+# SMTP_ALLOWED_CIDRS (e.g. "microsoft" or "google") and the host firewall.
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "dist/server.js"]
