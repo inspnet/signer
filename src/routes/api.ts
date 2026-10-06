@@ -381,18 +381,22 @@ export function registerApi(app: FastifyInstance): void {
     return {
       microsoft: {
         sendConnector: {
-          name: "Signer send — route outbound for signatures",
+          name: "Signer send",
           from: "Office 365",
           to: "Partner organization",
-          smartHost: `${host}:587`,
-          tls: "Required",
+          // Exchange Online always delivers to a smart host on port 25.
+          smartHost: host,
+          tls: `Required; certificate validated against ${host}`,
           usage: "Use only when a transport rule redirects messages to this connector"
         },
         receiveConnector: {
-          name: "Signer receive — accept signed mail",
-          from: "Partner organization",
+          name: "Signer receive",
+          // Only an on-premises connector lets Exchange Online relay the signed
+          // message on to external recipients; a partner connector rejects it
+          // with 550 5.7.64 TenantAttribution.
+          from: "Your organization's email server",
           to: "Office 365",
-          certDomain: host,
+          identifiedBy: "This server's public IPv4 address",
           tls: "Required"
         },
         transportRule: {
@@ -404,9 +408,13 @@ export function registerApi(app: FastifyInstance): void {
         },
         powershell: [
           `$smartHost = "${host}"`,
-          `$header = "${header}"`,
-          `New-OutboundConnector -Name "Signer send" -ConnectorType Partner -UseMXRecord $false -SmartHosts $smartHost -TlsSettings EncryptionOnly -Enabled $true -RouteAllMessagesViaOnPremises $false -IsTransportRuleScoped $true`,
-          `New-InboundConnector -Name "Signer receive" -ConnectorType Partner -SenderDomains * -RequireTls $true -RestrictDomainsToCertificate $true -TlsSenderCertificateName $smartHost`,
+          `$signerIp  = "<this server's public IPv4>"`,
+          `$header    = "${header}"`,
+          ``,
+          `New-OutboundConnector -Name "Signer send" -ConnectorType Partner -UseMXRecord $false -SmartHosts $smartHost -TlsSettings DomainValidation -TlsDomain $smartHost -IsTransportRuleScoped $true -CloudServicesMailEnabled $true -Enabled $true`,
+          ``,
+          `New-InboundConnector -Name "Signer receive" -ConnectorType OnPremises -SenderDomains * -SenderIPAddresses $signerIp -RequireTls $true -CloudServicesMailEnabled $true -Enabled $true`,
+          ``,
           `New-TransportRule -Name "Identify messages to send to Signer" -FromScope InOrganization -ExceptIfHeaderContainsMessageHeader $header -ExceptIfHeaderContainsWords "true" -RouteMessageOutboundConnector "Signer send"`
         ].join("\n")
       },
@@ -416,7 +424,7 @@ export function registerApi(app: FastifyInstance): void {
           name: "Allow Signer to return mail",
           allowedSenders: "Only addresses in my domains",
           auth: "Require TLS",
-          note: "Add this instance's public IP to the SMTP relay allow list."
+          note: "Add this server's public IPv4 address to the SMTP relay allow list."
         },
         contentCompliance: {
           name: "Send to Signer",
@@ -425,11 +433,11 @@ export function registerApi(app: FastifyInstance): void {
           action: "Change route → Signer; Require secure transport (TLS)"
         }
       },
-      spf: `include the sending IP of ${publicHost} (or this host) in each domain's SPF record so signed mail authenticates after it returns through Microsoft/Google.`,
+      spf: `No SPF change is needed for ${publicHost}: signed mail goes back through Microsoft 365 or Google and reaches recipients from their servers, so your existing SPF and DKIM records still apply.`,
       notes: [
-        "Mail is processed on this instance and returned to Microsoft 365 or Google — it is not sent to a third-party SaaS.",
+        "Mail is processed on this server and returned to Microsoft 365 or Google — it is not sent to a third-party SaaS.",
         "Users cannot remove the signature: it is applied after Send on the server, for every client including iOS Mail.",
-        "Azure often blocks outbound TCP 25. Prefer inbound 587 from Exchange connectors, and request an SMTP exemption or use MX:25 if your subscription allows it.",
+        "This server must be able to connect out on port 25 (Microsoft 365) or 587 (Google). Many hosting providers, Linode included, block those ports on new accounts until you ask support to lift the restriction.",
         "Set UPSTREAM_HOST to your tenant's mail.protection.outlook.com hostname (Microsoft) or smtp-relay.gmail.com (Google)."
       ]
     };

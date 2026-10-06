@@ -17,13 +17,15 @@ process.env.AUTH_RATE_LIMIT_MAX = "3";
 process.env.AUTH_RATE_LIMIT_WINDOW_MINUTES = "5";
 
 const { initDb, closeDb } = await import("../src/db/index.js");
+const { config, parseTrustProxy } = await import("../src/config.js");
 const { authPlugin, registerAuthRoutes } = await import("../src/auth/index.js");
 
 let app: FastifyInstance;
 
 beforeAll(async () => {
   initDb();
-  app = Fastify({ trustProxy: true });
+  // The same setting the server uses, so these tests cover the shipped default.
+  app = Fastify({ trustProxy: config.trustProxy });
   await app.register(cookie);
   await app.register(rateLimit, { global: false });
   await app.register(authPlugin);
@@ -77,5 +79,57 @@ describe("auth rate limiting", () => {
       codes.push(me.statusCode, providers.statusCode);
     }
     expect(codes.every((c) => c === 200)).toBe(true);
+  });
+
+  it("ignores X-Forwarded-For from a client that is not the proxy", async () => {
+    // A direct caller rotating the header must still land in one bucket.
+    const codes: number[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/auth/dev-login",
+        remoteAddress: "192.0.2.44",
+        headers: { "x-forwarded-for": `10.9.8.${i}` }
+      });
+      codes.push(res.statusCode);
+    }
+    expect(codes[3]).toBe(429);
+    expect(codes[4]).toBe(429);
+  });
+
+  it("uses the address the local proxy reports", async () => {
+    // Nginx on the same machine connects from loopback and sets the header.
+    for (let i = 0; i < 4; i += 1) {
+      await app.inject({
+        method: "POST",
+        url: "/api/auth/dev-login",
+        remoteAddress: "127.0.0.1",
+        headers: { "x-forwarded-for": "198.51.100.200" }
+      });
+    }
+    const someoneElse = await app.inject({
+      method: "POST",
+      url: "/api/auth/dev-login",
+      remoteAddress: "127.0.0.1",
+      headers: { "x-forwarded-for": "198.51.100.201" }
+    });
+    expect(someoneElse.statusCode).not.toBe(429);
+  });
+});
+
+describe("TRUST_PROXY parsing", () => {
+  it("defaults to the loopback proxy", () => {
+    expect(parseTrustProxy(undefined)).toBe("loopback");
+    expect(parseTrustProxy("")).toBe("loopback");
+  });
+
+  it("passes addresses and names through", () => {
+    expect(parseTrustProxy("loopback,uniquelocal")).toBe("loopback,uniquelocal");
+    expect(parseTrustProxy("10.0.0.5/32")).toBe("10.0.0.5/32");
+  });
+
+  it("reads booleans", () => {
+    expect(parseTrustProxy("false")).toBe(false);
+    expect(parseTrustProxy("true")).toBe(true);
   });
 });

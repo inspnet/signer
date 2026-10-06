@@ -45,8 +45,14 @@ function MailFlow() {
       <section className="panel p-5">
         <h2 className="font-semibold text-lg">Microsoft 365 / Exchange Online</h2>
         <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-stone-700">
-          <li>Create a Send connector to partner {ms.sendConnector.smartHost} with TLS, scoped to a transport rule.</li>
-          <li>Create a Receive connector from partner, requiring TLS and certificate name {ms.receiveConnector.certDomain}.</li>
+          <li>
+            Create an outbound connector to {ms.sendConnector.smartHost} (port 25), validating its TLS certificate, scoped to a
+            transport rule.
+          </li>
+          <li>
+            Create an inbound connector from {ms.receiveConnector.from}, identified by {ms.receiveConnector.identifiedBy.toLowerCase()},
+            requiring TLS.
+          </li>
           <li>
             Transport rule: sender inside the organisation, except if header {ms.transportRule.exceptIfHeader} is true, redirect to the
             Signer send connector.

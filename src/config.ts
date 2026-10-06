@@ -18,6 +18,25 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/**
+ * Which peers may set X-Forwarded-For. Only the reverse proxy in front of the
+ * portal should be trusted: Nginx on the same machine under Forge (loopback),
+ * or Caddy reaching a container through Docker's bridge (uniquelocal). Trusting
+ * every peer would let a client pick its own address by sending the header
+ * itself, which defeats the per-IP sign-in limit.
+ *
+ * Accepts addresses, CIDRs and the proxy-addr names loopback, linklocal and
+ * uniquelocal, comma-separated. Fastify ignores hop counts, so a number is
+ * rejected at startup rather than silently trusting nobody.
+ */
+export function parseTrustProxy(value: string | undefined): boolean | string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "loopback";
+  if (["true", "yes", "on"].includes(raw.toLowerCase())) return true;
+  if (["false", "no", "off"].includes(raw.toLowerCase())) return false;
+  return raw;
+}
+
 const dataDir = path.resolve(env("DATA_DIR", "./data"));
 
 export const config = {
@@ -27,6 +46,9 @@ export const config = {
   databasePath: path.resolve(env("DATABASE_PATH", path.join(dataDir, "signer.db"))),
   dataDir,
   httpPort: envInt("HTTP_PORT", 3000),
+  /** 127.0.0.1 when a reverse proxy on the same host fronts the portal; 0.0.0.0 inside Docker. */
+  httpHost: env("HTTP_HOST", "0.0.0.0"),
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   corsOrigins: env("CORS_ORIGINS", "http://localhost:5173")
     .split(",")
     .map((s) => s.trim())
@@ -88,6 +110,15 @@ export function googleLoginConfigured(): boolean {
   return Boolean(config.google.clientId && config.google.clientSecret);
 }
 
+function readable(file: string): boolean {
+  try {
+    fs.accessSync(file, fs.constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function ensureDataDir(): void {
   fs.mkdirSync(path.dirname(config.databasePath), { recursive: true });
   fs.mkdirSync(path.join(config.dataDir, "uploads"), { recursive: true });
@@ -120,9 +151,45 @@ export function validateConfig(): { fatal: string[]; warnings: string[] } {
     warnings.push(
       "SMTP_ALLOWED_CIDRS is empty, so any host that can reach the SMTP ports may relay mail through this " +
         'instance. Set SMTP_ALLOWED_CIDRS="microsoft" or "google" to track the published sender ranges ' +
-        "automatically, list explicit CIDRs, or restrict the ports at the firewall (NSG, VPC firewall, " +
-        "security group)."
+        "automatically, list explicit CIDRs, or restrict the ports at the firewall (ufw, Linode Cloud " +
+        "Firewall)."
     );
+  }
+
+  if (typeof config.trustProxy === "string" && /^\d+$/.test(config.trustProxy)) {
+    fatal.push(
+      `TRUST_PROXY=${config.trustProxy} is a hop count, which this server does not support. ` +
+        "Name the proxy instead: loopback (Nginx on the same machine) or loopback,uniquelocal (Docker)."
+    );
+  }
+
+  if (config.trustProxy === true) {
+    warnings.push(
+      "TRUST_PROXY is true, so any client can set its own address with X-Forwarded-For and bypass the " +
+        "sign-in rate limit. Name the proxy instead, e.g. loopback."
+    );
+  }
+
+  if (config.smtp.tlsCertPath || config.smtp.tlsKeyPath) {
+    for (const [name, file] of [
+      ["TLS_CERT_PATH", config.smtp.tlsCertPath],
+      ["TLS_KEY_PATH", config.smtp.tlsKeyPath]
+    ] as const) {
+      if (!file) {
+        fatal.push(`${name} is not set. Set both TLS_CERT_PATH and TLS_KEY_PATH, or neither.`);
+      } else if (!readable(file)) {
+        fatal.push(`${name} points at ${file}, which does not exist or cannot be read by this process.`);
+      }
+    }
+  } else if (!config.demoMode) {
+    warnings.push(
+      "TLS_CERT_PATH / TLS_KEY_PATH are not set, so the SMTP listeners do not offer STARTTLS. Microsoft 365 " +
+        "connectors require TLS and will not deliver to this host until a certificate is configured."
+    );
+  }
+
+  if (!config.demoMode && config.smtp.hostname === "signer.local") {
+    warnings.push("SMTP_HOSTNAME is not set. Set it to the name on the TLS certificate, e.g. signer.example.com.");
   }
 
   if (!config.upstream.tlsRejectUnauthorized) {

@@ -1,4 +1,5 @@
-# Replace the hostname with PUBLIC_URL / DNS A record for this VM.
+# Only for the Docker alternative; the Forge deployment uses Forge's Nginx
+# (deploy/forge/nginx.conf). Replace the hostname with PUBLIC_URL.
 # Caddy terminates HTTPS and proxies the Signer portal.
 # SMTP (25/587) is published by Docker on the host, not through this file.
 
