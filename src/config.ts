@@ -85,6 +85,13 @@ export const config = {
       .map((s) => s.trim())
       .filter(Boolean),
     rangeRefreshMinutes: envInt("SMTP_RANGE_REFRESH_MINUTES", 720),
+    /**
+     * Largest message accepted, in MB. Exchange Online allows up to 150 MB
+     * (its limit counts the MIME encoding, so attachments of about 100 MB).
+     * Signing touches only the body text, so memory per message is about
+     * twice its size.
+     */
+    maxMessageMb: envInt("SMTP_MAX_MESSAGE_MB", 150),
     tlsCertPath: env("TLS_CERT_PATH"),
     tlsKeyPath: env("TLS_KEY_PATH")
   },

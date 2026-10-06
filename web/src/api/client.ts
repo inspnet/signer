@@ -123,6 +123,16 @@ export type AlertConfig = {
   last: { at: string; ok: boolean; kind: "problem" | "recovery" | "test"; detail: string } | null;
 };
 
+export type SentItemsConfig = {
+  enabled: boolean;
+  groupIds: string[];
+  available: boolean;
+  clientId: string;
+  pending: number;
+  results: Array<{ at: string; sender: string; result: "updated" | "not-found" | "skipped" | "failed"; detail: string }>;
+  groups: Array<{ id: string; name: string }>;
+};
+
 export type MailLogRow = {
   receivedAt: string;
   sender: string;
@@ -207,6 +217,14 @@ export const api = {
   saveDisclaimer: (body: { id?: string; name: string; html: string; enabled: boolean; rules: RuleSet }) =>
     request<Disclaimer>("/api/disclaimers", { method: "POST", body: JSON.stringify(body) }),
   domainNames: () => request<string[]>("/api/domains/names"),
+  sentItems: () => request<SentItemsConfig>("/api/sent-items"),
+  saveSentItems: (body: { enabled: boolean; groupIds: string[] }) =>
+    request<SentItemsConfig>("/api/sent-items", { method: "PUT", body: JSON.stringify(body) }),
+  checkSentItems: () =>
+    request<{ ok: boolean; steps: Array<{ step: string; ok: boolean; detail: string }>; hint: string }>("/api/sent-items/check", {
+      method: "POST",
+      body: "{}"
+    }),
   alerts: () => request<AlertConfig>("/api/alerts"),
   saveAlerts: (body: {
     enabled: boolean;

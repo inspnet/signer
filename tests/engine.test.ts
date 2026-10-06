@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { simpleParser } from "mailparser";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "signer-"));
 
@@ -250,10 +251,11 @@ describe("end-to-end processing", () => {
     const result = await processRawMessage(raw, "scott@inspired.co", ["ada@contoso.com"]);
     expect(result.skipped).toBe(false);
     expect(result.signatureId).toBeTruthy();
-    const text = result.raw.toString("utf8");
-    expect(text).toMatch(/X-Signer-MessageProcessed: true/i);
-    expect(text).toContain("Scott Williamson");
-    expect(text.toLowerCase()).toContain("confidential");
+    expect(result.raw.toString("utf8")).toMatch(/X-Signer-MessageProcessed: true/i);
+    // Read the decoded body: quoted-printable may wrap a word across lines in the raw bytes.
+    const html = String((await simpleParser(result.raw)).html);
+    expect(html).toContain("Scott Williamson");
+    expect(html.toLowerCase()).toContain("confidential");
   });
 
   it("does not apply an exception sender", async () => {

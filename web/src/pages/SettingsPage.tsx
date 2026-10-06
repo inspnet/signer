@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
-import { api, type AlertConfig, type DirectoryPerson, type RelayDiagnosis, type UpdateCheck, type UpdateStatus } from "../api/client";
+import { api, type AlertConfig, type SentItemsConfig, type DirectoryPerson, type RelayDiagnosis, type UpdateCheck, type UpdateStatus } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
 import { useAuth } from "../layouts/Auth";
 
 export function SettingsPage() {
-  const [tab, setTab] = useState<"flow" | "domains" | "directory" | "fields" | "admins" | "alerts" | "updates">("flow");
+  const [tab, setTab] = useState<"flow" | "domains" | "directory" | "fields" | "admins" | "sent" | "alerts" | "updates">("flow");
   return (
     <div>
       <PageHeader
@@ -14,9 +14,9 @@ export function SettingsPage() {
         description="Connectors, domains, directory cache, who may edit their own card, alerts and updates."
       />
       <div className="tabs">
-        {(["flow", "domains", "directory", "fields", "admins", "alerts", "updates"] as const).map((t) => (
+        {(["flow", "domains", "directory", "fields", "admins", "sent", "alerts", "updates"] as const).map((t) => (
           <button key={t} className={`tab capitalize ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {t === "flow" ? "Connectors" : t === "fields" ? "Field locks" : t}
+            {t === "flow" ? "Connectors" : t === "fields" ? "Field locks" : t === "sent" ? "Sent Items" : t}
           </button>
         ))}
       </div>
@@ -24,6 +24,7 @@ export function SettingsPage() {
       {tab === "domains" && <Domains />}
       {tab === "updates" && <Updates />}
       {tab === "alerts" && <Alerts />}
+      {tab === "sent" && <SentItems />}
       {tab === "directory" && <Directory />}
       {tab === "fields" && <Fields />}
       {tab === "admins" && <Admins />}
@@ -1194,6 +1195,216 @@ function Alerts() {
           create a sending API key for it under Domain settings → Sending keys. Pick the region the domain was created in.
         </p>
       </section>
+    </div>
+  );
+}
+
+const RESULT_TONE = { updated: "text-emerald-700", "not-found": "text-slate-500", skipped: "text-amber-800", failed: "text-red-700" } as const;
+const RESULT_LABEL = { updated: "Updated", "not-found": "Not found", skipped: "Left as sent", failed: "Failed" } as const;
+
+/** Swapping the unsigned copy in people's Sent Items for the signed one (Microsoft 365). */
+function SentItems() {
+  const [data, setData] = useState<SentItemsConfig | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [scope, setScope] = useState<"everyone" | "groups">("groups");
+  const [groupIds, setGroupIds] = useState<string[]>([]);
+  const [filter, setFilter] = useState("");
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [check, setCheck] = useState<Awaited<ReturnType<typeof api.checkSentItems>> | null>(null);
+  const [busy, setBusy] = useState("");
+  const adopt = (c: SentItemsConfig) => {
+    setData(c);
+    setEnabled(c.enabled);
+    setGroupIds(c.groupIds);
+    setScope(c.groupIds.length || !c.enabled ? "groups" : "everyone");
+  };
+  useEffect(() => {
+    void api.sentItems().then(adopt);
+  }, []);
+  if (!data) return <p className="mt-4 text-slate-500">Loading…</p>;
+  if (!data.available) {
+    return (
+      <p className="mt-6 panel p-5 text-sm text-slate-600">
+        Sent Items update is for Microsoft 365 and needs sign-in with Microsoft (ENTRA_*) configured on this server.
+      </p>
+    );
+  }
+  const save = async () => {
+    setBusy("save");
+    setMessage(null);
+    try {
+      adopt(await api.saveSentItems({ enabled, groupIds: scope === "everyone" ? [] : groupIds }));
+      setMessage({ ok: true, text: "Saved." });
+    } catch (err) {
+      setMessage({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy("");
+    }
+  };
+  const runCheck = async () => {
+    setBusy("check");
+    setCheck(null);
+    try {
+      setCheck(await api.checkSentItems());
+    } catch (err) {
+      setCheck({ ok: false, steps: [], hint: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy("");
+    }
+  };
+  const shownGroups = data.groups.filter((g) => g.name.toLowerCase().includes(filter.trim().toLowerCase()));
+  const noGroups = scope === "groups" && !groupIds.length;
+  const id = data.clientId || "<application (client) ID>";
+
+  return (
+    <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
+      <div className="space-y-6">
+        <section className="panel p-5 space-y-4 text-sm">
+          <label className="flex gap-2 items-center font-medium">
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            Replace the copy in the sender&apos;s Sent Items with the signed version
+          </label>
+          <div className="space-y-2">
+            <label className="flex gap-2 items-center">
+              <input type="radio" checked={scope === "groups"} onChange={() => setScope("groups")} />
+              Only people in these groups (recommended to start)
+            </label>
+            {scope === "groups" && (
+              <div className="ml-6 rounded-xl border border-line">
+                <input
+                  className="w-full border-b border-line px-3 py-2 text-sm outline-none rounded-t-xl"
+                  placeholder="Filter groups"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                />
+                <div className="max-h-56 overflow-auto p-2">
+                  {shownGroups.map((g) => (
+                    <label key={g.id} className="flex gap-2 items-center px-1 py-1">
+                      <input
+                        type="checkbox"
+                        checked={groupIds.includes(g.id)}
+                        onChange={(e) => setGroupIds(e.target.checked ? [...groupIds, g.id] : groupIds.filter((x) => x !== g.id))}
+                      />
+                      {g.name}
+                    </label>
+                  ))}
+                  {!data.groups.length && <p className="px-1 py-1 text-slate-500">No groups yet: run a directory sync.</p>}
+                </div>
+              </div>
+            )}
+            <label className="flex gap-2 items-center">
+              <input type="radio" checked={scope === "everyone"} onChange={() => setScope("everyone")} />
+              Everyone whose mail Signer signs
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn btn-primary" disabled={busy !== "" || (enabled && noGroups)} onClick={() => void save()}>
+              Save
+            </button>
+            <button className="btn btn-ghost" disabled={busy !== ""} onClick={() => void runCheck()}>
+              {busy === "check" ? "Checking…" : "Run the check"}
+            </button>
+            {enabled && noGroups && <span className="text-amber-800">Choose at least one group, or Everyone.</span>}
+            {message && <span className={message.ok ? "text-emerald-700" : "text-red-700"}>{message.text}</span>}
+          </div>
+          {check && (
+            <div className="rounded-xl bg-paper p-4">
+              <p className={`font-semibold ${check.ok ? "text-emerald-700" : "text-red-700"}`}>
+                {check.ok ? "Your tenant allows everything Sent Items update needs." : "Something the update needs was refused."}
+              </p>
+              <ol className="mt-2 space-y-1">
+                {check.steps.map((s) => (
+                  <li key={s.step} className="flex gap-2">
+                    <span className={`w-4 font-bold ${s.ok ? "text-emerald-700" : "text-red-700"}`}>{s.ok ? "✓" : "✕"}</span>
+                    <span className="min-w-0">
+                      <span className="font-medium">{s.step}</span>
+                      <span className="text-slate-600 break-words"> — {s.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              {check.hint && <p className="mt-2 text-amber-900">{check.hint}</p>}
+            </div>
+          )}
+        </section>
+
+        <section className="panel overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4">
+            <h2 className="font-semibold">Recent updates</h2>
+            <span className="text-xs text-slate-500">{data.pending} waiting · kept in memory, last 50</span>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="table-head">
+              <tr>
+                <th className="px-5 py-2.5 font-medium">When</th>
+                <th className="px-3 py-2.5 font-medium">Sender</th>
+                <th className="px-3 py-2.5 font-medium">Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.results.map((r, i) => (
+                <tr key={i} className="border-t border-line align-top">
+                  <td className="px-5 py-2.5 whitespace-nowrap">{new Date(r.at).toLocaleString()}</td>
+                  <td className="px-3 py-2.5">{r.sender}</td>
+                  <td className="px-3 py-2.5">
+                    <span className={`font-medium ${RESULT_TONE[r.result]}`}>{RESULT_LABEL[r.result]}</span>
+                    <span className="block text-xs text-slate-500 break-words">{r.detail}</span>
+                  </td>
+                </tr>
+              ))}
+              {!data.results.length && (
+                <tr>
+                  <td className="px-5 py-3 text-slate-500" colSpan={3}>
+                    Nothing yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+      </div>
+
+      <div className="space-y-6">
+        <section className="panel p-5 text-sm leading-6 text-slate-600 space-y-3">
+          <h2 className="font-semibold text-base text-ink">How it works</h2>
+          <p>
+            Outlook saves the unsigned message to Sent Items before Signer signs it. A few seconds after Signer hands the signed
+            message back, it creates the signed copy in the sender&apos;s Sent Items, with the same recipients, time and conversation,
+            copies the attachments across (up to 150 MB each), and permanently deletes the unsigned original.
+          </p>
+          <p>
+            If any step fails, the signed copy is removed and the original is left as it was. Messages with an attached email or
+            a cloud file are left as sent.
+          </p>
+          <p>
+            Signer keeps only the signed body and signature images in memory until the swap is done (at most about 15 minutes),
+            never the attachments, and writes nothing to disk.
+          </p>
+        </section>
+        <section className="panel p-5 text-sm leading-6 text-slate-600 space-y-3">
+          <h2 className="font-semibold text-base text-ink">Permission</h2>
+          <p>
+            Signer&apos;s Entra app needs <strong className="text-ink">Mail.ReadWrite</strong> as an Application permission. Choose one:
+          </p>
+          <p>
+            <strong className="text-ink">Every mailbox:</strong> Entra admin center → App registrations → the Signer app → API
+            permissions → Microsoft Graph → Application → Mail.ReadWrite → Grant admin consent.
+          </p>
+          <p>
+            <strong className="text-ink">Only the people in scope (recommended):</strong> leave it out of Entra and grant it in
+            Exchange Online with RBAC for Applications, limited to a mail-enabled security group. The object ID is the Signer
+            app&apos;s, under Entra → Enterprise applications.
+          </p>
+          <CodeBlock
+            code={[
+              `New-ServicePrincipal -AppId "${id}" -ObjectId "<enterprise app object ID>" -DisplayName "Signer"`,
+              `New-ManagementScope -Name "Signer Sent Items" -RecipientRestrictionFilter "MemberOfGroup -eq '<group distinguished name>'"`,
+              `New-ManagementRoleAssignment -App "${id}" -Role "Application Mail.ReadWrite" -CustomResourceScope "Signer Sent Items"`
+            ].join("\n")}
+          />
+          <p className="text-xs text-slate-500">Then click Run the check, with your own mailbox inside that group.</p>
+        </section>
+      </div>
     </div>
   );
 }

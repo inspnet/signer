@@ -54,6 +54,13 @@ import { perDomainMx, returnRouteFor } from "../smtp/route.js";
 import { detectPublicIPv4 } from "../system/publicip.js";
 import { diagnoseRelay } from "../smtp/diagnose.js";
 import { describeFailure } from "../smtp/explain.js";
+import {
+  checkSentItems,
+  pendingSentItems,
+  recentSentItemsResults,
+  saveSentItemsSettings,
+  sentItemsSettings
+} from "../mail/sentitems.js";
 import { alertSettings, alertsConfigured, lastAlert, saveAlertSettings, sendTestAlert } from "../alerts/index.js";
 import {
   checkForUpdates,
@@ -843,6 +850,48 @@ export function registerApi(app: FastifyInstance): void {
       const result = await sendTestAlert();
       audit(admin.email, "test_alert", "", result.ok ? "sent" : "failed");
       if (!result.ok) return reply.code(502).send({ error: result.detail });
+      return result;
+    }
+  );
+
+  // Swapping the unsigned copy in Sent Items for the signed one (Microsoft 365).
+  const sentItemsView = () => ({
+    ...sentItemsSettings(),
+    available: entraConfigured(),
+    clientId: config.entra.clientId,
+    pending: pendingSentItems(),
+    results: recentSentItemsResults(),
+    groups: listGroups().map((g) => ({ id: g.id, name: g.name }))
+  });
+
+  app.get("/api/sent-items", async (req, reply) => {
+    if (!requireRole(["admin"], req, reply)) return;
+    return sentItemsView();
+  });
+
+  app.put("/api/sent-items", async (req, reply) => {
+    const admin = requireRole(["admin"], req, reply);
+    if (!admin) return;
+    const body = (req.body ?? {}) as { enabled?: boolean; groupIds?: unknown };
+    const known = new Set(listGroups().map((g) => g.id));
+    const groupIds = Array.isArray(body.groupIds) ? body.groupIds.map(String).filter((g) => known.has(g)) : sentItemsSettings().groupIds;
+    const enabled = body.enabled ?? sentItemsSettings().enabled;
+    if (enabled && !entraConfigured()) {
+      return reply.code(400).send({ error: "Sent Items update needs Microsoft 365 sign-in (ENTRA_*) configured on this server." });
+    }
+    saveSentItemsSettings({ enabled, groupIds });
+    audit(admin.email, "update_sent_items", "", `${enabled ? "on" : "off"}; ${groupIds.length ? `${groupIds.length} groups` : "everyone"}`);
+    return sentItemsView();
+  });
+
+  app.post(
+    "/api/sent-items/check",
+    { config: { rateLimit: { max: 10, timeWindow: 10 * 60 * 1000 } } },
+    async (req, reply) => {
+      const admin = requireRole(["admin"], req, reply);
+      if (!admin) return;
+      const result = await checkSentItems(admin.email);
+      audit(admin.email, "check_sent_items", "", result.ok ? "passed" : "failed");
       return result;
     }
   );
