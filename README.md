@@ -367,6 +367,14 @@ How the portal updater stays safe:
 
 **Configuration changes.** Edit `/etc/signer/signer.env`, then `systemctl restart signer`.
 
+**Alerts.** **Settings → Alerts** emails administrators when messages are *Deferred* (Signer could not hand them back, so Microsoft 365 / Google hold them and retry) or *Unsigned* (delivered without a signature). Alerts go through [Mailgun](https://www.mailgun.com)'s HTTPS API rather than Signer's own SMTP path, so they still arrive when port 25 is blocked or Exchange refuses Signer. To set it up:
+
+1. In Mailgun, add a sending domain (a subdomain such as `mg.yourdomain.com`), add its DNS records and wait until it is verified.
+2. Under that domain's **Sending keys**, create a key.
+3. In **Settings → Alerts**, enter the domain, its region (US or EU), the key and the recipients, then click **Save and send a test**. Turn alerts on.
+
+The first problem is reported straight away. Later ones are collected into one email per interval (15 minutes by default). One more email follows when mail is flowing again. Alerts carry counts, sender domains and the reasons, with email addresses removed; the full detail stays in **Activity**. Send them to addresses that do not depend on the tenant's own mail flow if you can.
+
 **Logs.** `journalctl -u signer -f`. The journal keeps 14 days, and Nginx's access log is off, so client IP addresses are not kept longer than [PRIVACY.md](PRIVACY.md) states.
 
 **Certificates.** `certbot.timer` renews the Let's Encrypt certificate. The deploy hook `/etc/letsencrypt/renewal-hooks/deploy/signer` copies each new certificate to `/etc/signer/tls`, reloads Nginx and restarts Signer, so SMTP STARTTLS never serves an expired certificate. `certbot renew --dry-run` tests renewal.

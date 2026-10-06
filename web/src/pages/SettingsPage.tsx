@@ -1,18 +1,18 @@
 import { useEffect, useState } from "react";
-import { api, type DirectoryPerson, type RelayDiagnosis, type UpdateCheck, type UpdateStatus } from "../api/client";
+import { api, type AlertConfig, type DirectoryPerson, type RelayDiagnosis, type UpdateCheck, type UpdateStatus } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
 
 export function SettingsPage() {
-  const [tab, setTab] = useState<"flow" | "domains" | "directory" | "fields" | "admins" | "updates">("flow");
+  const [tab, setTab] = useState<"flow" | "domains" | "directory" | "fields" | "admins" | "alerts" | "updates">("flow");
   return (
     <div>
       <PageHeader
         kicker="Admin"
         title="Settings"
-        description="Connectors, domains, directory cache, who may edit their own card, and updates."
+        description="Connectors, domains, directory cache, who may edit their own card, alerts and updates."
       />
       <div className="tabs">
-        {(["flow", "domains", "directory", "fields", "admins", "updates"] as const).map((t) => (
+        {(["flow", "domains", "directory", "fields", "admins", "alerts", "updates"] as const).map((t) => (
           <button key={t} className={`tab capitalize ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
             {t === "flow" ? "Connectors" : t === "fields" ? "Field locks" : t}
           </button>
@@ -21,6 +21,7 @@ export function SettingsPage() {
       {tab === "flow" && <MailFlow />}
       {tab === "domains" && <Domains />}
       {tab === "updates" && <Updates />}
+      {tab === "alerts" && <Alerts />}
       {tab === "directory" && <Directory />}
       {tab === "fields" && <Fields />}
       {tab === "admins" && <Admins />}
@@ -821,5 +822,173 @@ function ReturnPathTest() {
         </div>
       )}
     </section>
+  );
+}
+
+/** Email alerts for deferred or unsigned mail, sent through Mailgun's HTTP API. */
+function Alerts() {
+  const [saved, setSaved] = useState<AlertConfig | null>(null);
+  const [form, setForm] = useState({
+    enabled: false,
+    domain: "",
+    region: "us" as "us" | "eu",
+    apiKey: "",
+    from: "",
+    recipients: "",
+    intervalMinutes: 15
+  });
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const adopt = (c: AlertConfig) => {
+    setSaved(c);
+    setForm({
+      enabled: c.enabled,
+      domain: c.domain,
+      region: c.region,
+      apiKey: "",
+      from: c.from,
+      recipients: c.recipients.join(", "),
+      intervalMinutes: c.intervalMinutes
+    });
+  };
+  useEffect(() => {
+    void api.alerts().then(adopt);
+  }, []);
+  if (!saved) return <p className="mt-4 text-stone-500">Loading…</p>;
+
+  const run = async (fn: () => Promise<string>) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      setMessage({ ok: true, text: await fn() });
+    } catch (err) {
+      setMessage({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const save = () =>
+    run(async () => {
+      adopt(await api.saveAlerts({ ...form, apiKey: form.apiKey || undefined }));
+      return "Saved.";
+    });
+  const test = () =>
+    run(async () => {
+      adopt(await api.saveAlerts({ ...form, apiKey: form.apiKey || undefined }));
+      const res = await api.testAlert();
+      setSaved(await api.alerts());
+      return res.detail;
+    });
+
+  return (
+    <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
+      <form
+        className="panel p-5 space-y-4 text-sm"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <label className="flex gap-2 items-center font-medium">
+          <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
+          Email an alert when messages are deferred or delivered unsigned
+        </label>
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_10rem]">
+          <label className="block">
+            Mailgun sending domain
+            <input className="input mt-1" placeholder="mg.yourdomain.com" value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} />
+          </label>
+          <label className="block">
+            Region
+            <select className="input mt-1" value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value as "us" | "eu" })}>
+              <option value="us">US</option>
+              <option value="eu">EU</option>
+            </select>
+          </label>
+        </div>
+        <label className="block">
+          API key
+          <input
+            className="input mt-1 font-mono"
+            type="password"
+            autoComplete="off"
+            placeholder={saved.apiKeySet ? "Saved — leave empty to keep it" : "A sending key for this domain"}
+            value={form.apiKey}
+            onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+          />
+        </label>
+        <label className="block">
+          Send alerts to
+          <input
+            className="input mt-1"
+            placeholder="it@yourdomain.com, oncall@yourdomain.com"
+            value={form.recipients}
+            onChange={(e) => setForm({ ...form, recipients: e.target.value })}
+          />
+          <span className="block mt-1 text-xs text-stone-500">Use addresses that do not depend on this tenant's mail flow, if you can.</span>
+        </label>
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_10rem]">
+          <label className="block">
+            From (optional)
+            <input
+              className="input mt-1"
+              placeholder={`Signer alerts <signer@${form.domain || "mg.yourdomain.com"}>`}
+              value={form.from}
+              onChange={(e) => setForm({ ...form, from: e.target.value })}
+            />
+          </label>
+          <label className="block">
+            At most one every
+            <select
+              className="input mt-1"
+              value={form.intervalMinutes}
+              onChange={(e) => setForm({ ...form, intervalMinutes: Number(e.target.value) })}
+            >
+              {[5, 15, 30, 60, 240, 1440].map((m) => (
+                <option key={m} value={m}>
+                  {m < 60 ? `${m} minutes` : m === 60 ? "hour" : m === 1440 ? "day" : `${m / 60} hours`}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="btn btn-primary" disabled={busy}>
+            Save
+          </button>
+          <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void test()}>
+            Save and send a test
+          </button>
+          {message && <span className={message.ok ? "text-teal-800" : "text-red-700"}>{message.text}</span>}
+        </div>
+        {saved.last && (
+          <p className="text-xs text-stone-500">
+            Last {saved.last.kind === "test" ? "test" : saved.last.kind === "recovery" ? "recovery notice" : "alert"}:{" "}
+            {new Date(saved.last.at).toLocaleString()} — <span className={saved.last.ok ? "" : "text-red-700"}>{saved.last.detail}</span>
+          </p>
+        )}
+      </form>
+      <section className="panel p-5 text-sm leading-6 text-stone-700 space-y-3">
+        <h2 className="font-semibold text-lg text-ink">How alerts work</h2>
+        <p>
+          Signer emails these addresses when a message is <strong>Deferred</strong> (it could not be handed back, so Microsoft 365
+          or Google are holding it and retrying) or <strong>Unsigned</strong> (delivered without a signature). The first problem
+          is reported straight away; later ones are collected into one email per interval. One more email follows when mail is
+          flowing again.
+        </p>
+        <p>
+          Alerts go out through Mailgun&apos;s HTTPS API, not through Signer&apos;s own mail path, so they still arrive when port 25 is
+          blocked or Exchange is refusing Signer.
+        </p>
+        <p>
+          They contain counts, sender domains and the reasons, with email addresses removed. The full detail stays in Activity on
+          this server.
+        </p>
+        <p className="text-xs text-stone-500">
+          In Mailgun: add and verify a sending domain (a subdomain such as mg.yourdomain.com keeps it apart from your main mail), then
+          create a sending API key for it under Domain settings → Sending keys. Pick the region the domain was created in.
+        </p>
+      </section>
+    </div>
   );
 }

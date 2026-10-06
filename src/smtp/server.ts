@@ -8,6 +8,7 @@ import { processRawMessage } from "../mail/process.js";
 import { getAllowedCidrs, initAllowedCidrs, startRangeRefresh } from "./ipranges.js";
 import { relayTargetFor } from "./route.js";
 import { describeFailure, RelayError } from "./explain.js";
+import { noteMailOutcome } from "../alerts/index.js";
 
 export function ipAllowed(ip: string, cidrs: string[] = getAllowedCidrs()): boolean {
   if (!cidrs.length) return true;
@@ -129,6 +130,7 @@ export function hasProcessedHeader(raw: Buffer): boolean {
 function record(entry: Parameters<typeof logMail>[0]): void {
   // The same reason Activity shows, for journalctl.
   if (entry.status === "error" || entry.status === "deferred") console.warn(`[signer] Message ${entry.status}: ${entry.detail ?? ""}`);
+  noteMailOutcome(entry.status, entry.detail ?? "", entry.sender);
   try {
     logMail(entry);
   } catch (err) {
