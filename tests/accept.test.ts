@@ -37,12 +37,11 @@ afterEach(() => {
 });
 
 describe("inbound acceptance", () => {
-  it("refuses a From domain that is not listed, without calling DMARC", async () => {
-    await expect(
-      authorizeInbound(message("Ada <ada@elsewhere.test>"), conn, async () => {
-        throw new Error("should not check DMARC");
-      })
-    ).rejects.toMatchObject({ responseCode: 550, message: expect.stringContaining("elsewhere.test") });
+  it("lets a From domain that is not listed through, unsigned, without calling DMARC", async () => {
+    const result = await authorizeInbound(message("Ada <ada@elsewhere.test>"), conn, async () => {
+      throw new Error("should not check DMARC");
+    });
+    expect(result).toEqual({ domain: "elsewhere.test", listed: false });
   });
 
   it("refuses a message with no From address", async () => {
@@ -54,7 +53,7 @@ describe("inbound acceptance", () => {
       result: "pass",
       spf: "pass"
     }));
-    expect(result.domain).toBe("example.com");
+    expect(result).toEqual({ domain: "example.com", listed: true });
   });
 
   it("defers a temporary DMARC failure and refuses a permanent one", async () => {

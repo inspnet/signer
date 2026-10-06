@@ -82,31 +82,32 @@ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
- * Accept mail only for a domain this organisation has listed, and only when
- * DMARC passes for that From domain. Sender IP ranges are not consulted:
- * connector addresses change, and a passing DMARC result is what shows the
- * message was authorised for the domain.
+ * The second of two gates. The first is the connection itself: only hosts in
+ * SMTP_ALLOWED_CIDRS (Microsoft's or Google's published sending ranges) may
+ * connect at all (see ipranges.ts).
  *
- * Demo mode still requires a listed domain, and skips the DNS check so a lab
- * can submit mail without a published record. Production does not.
+ * A message from one of this organisation's listed domains is then accepted
+ * only when DMARC passes for that From domain, which shows it was authorised
+ * for the domain and not just sent from somewhere on the provider's platform.
+ *
+ * A message from any other domain is not refused: it is passed through
+ * unchanged and unsigned, as before (`listed: false`). Refusing it would bounce
+ * mail from people whose address is still on, say, an onmicrosoft.com domain.
+ *
+ * Demo mode skips the DNS check so a lab can submit mail without a published
+ * record. Production does not.
  */
 export async function authorizeInbound(
   raw: Buffer,
   conn: { ip: string; helo: string; sender: string },
   check: DmarcCheck = checkDmarc
-): Promise<{ domain: string }> {
+): Promise<{ domain: string; listed: boolean }> {
   const domains = await fromDomains(raw);
   if (!domains.length) throw new InboundRefusal("Message has no From address", false);
   if (domains.length > 1) throw new InboundRefusal("Message has more than one From domain", false);
   const domain = domains[0]!;
-  const known = domainNames();
-  if (!known.length) {
-    throw new InboundRefusal("This server has no organisation domains configured", false);
-  }
-  if (!known.includes(domain)) {
-    throw new InboundRefusal(`Sender domain ${domain} is not one of this organisation's domains`, false);
-  }
-  if (config.demoMode) return { domain };
+  if (!domainNames().includes(domain)) return { domain, listed: false };
+  if (config.demoMode) return { domain, listed: true };
 
   const ip = clientIp(conn.ip);
   let outcome: DmarcOutcome;
@@ -117,7 +118,7 @@ export async function authorizeInbound(
     throw new InboundRefusal(`Temporary DMARC failure for ${domain} (${why})`, true);
   }
   const result = (outcome.result || "none").toLowerCase();
-  if (result === "pass") return { domain };
+  if (result === "pass") return { domain, listed: true };
   const via = [outcome.spf && `spf=${outcome.spf}`, outcome.dkim && `dkim=${outcome.dkim}`].filter(Boolean).join(", ");
   const suffix = via ? ` (${via})` : "";
   if (TEMPORARY.has(result)) {

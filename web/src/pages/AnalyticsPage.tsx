@@ -26,7 +26,8 @@ export function AnalyticsPage() {
       </div>
       <p className="mt-6 text-sm text-slate-600 leading-6">
         <strong>Unsigned</strong> means the message was delivered without a signature; <strong>Deferred</strong> means it could not
-        be handed back yet, so Microsoft 365 or Google keep it and retry. Each says why underneath.
+        be handed back yet, so Microsoft 365 or Google keep it and retry; <strong>Refused</strong> means DMARC did not pass for one of
+        your domains, so the sender got a bounce. Each says why underneath.
       </p>
       <div className="mt-3">
         <MailLogTable rows={data.recent} empty="No messages yet." />

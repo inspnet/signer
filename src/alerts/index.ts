@@ -27,7 +27,7 @@ export type AlertSettings = {
   intervalMinutes: number;
 };
 
-export type AlertResult = { at: string; ok: boolean; kind: "problem" | "recovery" | "test"; detail: string };
+export type AlertResult = { at: string; ok: boolean; kind: "problem" | "recovery" | "refusal" | "test"; detail: string };
 
 type Problem = { at: string; status: "deferred" | "error"; senderDomain: string; detail: string };
 
@@ -84,6 +84,10 @@ let alerted = false;
 
 /** For tests. */
 export function resetAlertState(): void {
+  refusals = [];
+  if (refusalTimer) clearTimeout(refusalTimer);
+  refusalTimer = null;
+  lastRefusalAlertAt = 0;
   pending = [];
   if (timer) clearTimeout(timer);
   timer = null;
@@ -96,6 +100,7 @@ export function noteMailOutcome(status: string, detail: string, sender: string):
   try {
     const settings = alertSettings();
     if (!settings.enabled || !alertsConfigured(settings)) return;
+    if (status === "rejected") return noteRefusal(settings, detail, sender);
     if (DELIVERED.has(status)) {
       clearWait();
       pending = [];
@@ -121,6 +126,75 @@ export function noteMailOutcome(status: string, detail: string, sender: string):
   } catch (err) {
     console.error("[signer] Alerting failed", err);
   }
+}
+
+/**
+ * Refusals are their own alert. A refused message bounced back to one of the
+ * organisation's own senders (DMARC failed for a listed domain), which is not
+ * an outage that might clear up, so it is reported after a short pause that
+ * collects a burst into one email, and then at most once per alert interval.
+ */
+const REFUSAL_BATCH_MS = 60_000;
+let refusals: Problem[] = [];
+let refusalTimer: NodeJS.Timeout | null = null;
+let lastRefusalAlertAt = 0;
+
+function noteRefusal(settings: AlertSettings, detail: string, sender: string): void {
+  refusals.push({
+    at: new Date().toISOString(),
+    status: "deferred",
+    senderDomain: sender.split("@")[1]?.toLowerCase() || "(no sender)",
+    detail: redact(detail || "No detail recorded").slice(0, 600)
+  });
+  if (refusals.length > MAX_PENDING) refusals.shift();
+  if (refusalTimer) return;
+  const wait = Math.max(REFUSAL_BATCH_MS, lastRefusalAlertAt + settings.intervalMinutes * 60_000 - Date.now());
+  refusalTimer = setTimeout(() => {
+    refusalTimer = null;
+    void flushRefusals();
+  }, wait);
+  refusalTimer.unref?.();
+}
+
+async function flushRefusals(): Promise<void> {
+  const batch = refusals;
+  refusals = [];
+  const settings = alertSettings();
+  if (!batch.length || !settings.enabled || !alertsConfigured(settings)) return;
+  lastRefusalAlertAt = Date.now();
+  await deliver(settings, "refusal", refusalMessage(batch, settings));
+}
+
+function refusalMessage(batch: Problem[], settings: AlertSettings): { subject: string; text: string } {
+  const reasons = new Map<string, { count: number; domains: Set<string>; detail: string }>();
+  for (const p of batch) {
+    const key = reasonKey(p.detail);
+    const entry = reasons.get(key) ?? { count: 0, domains: new Set<string>(), detail: p.detail };
+    entry.count += 1;
+    entry.domains.add(p.senderDomain);
+    reasons.set(key, entry);
+  }
+  const n = batch.length;
+  return {
+    subject: `Signer: refused ${n} message${n === 1 ? "" : "s"} on ${config.smtp.hostname}`,
+    text: [
+      `Signer refused ${n} message${n === 1 ? "" : "s"} since ${batch[0]!.at} (UTC). The sender${n === 1 ? " gets" : "s get"} a bounce; nothing was delivered.`,
+      "",
+      "Reasons:",
+      ...[...reasons.values()]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10)
+        .map((r) => `- ${r.count}× (from ${[...r.domains].join(", ")}): ${r.detail}`),
+      "",
+      "A DMARC failure for one of your own domains usually means the message was not DKIM-signed and its envelope " +
+        "sender is not aligned (out-of-office replies and read receipts have an empty one), or the domain's SPF does not " +
+        "include Microsoft 365 or Google.",
+      "",
+      `Activity: ${link("/analytics")}`,
+      "",
+      `Refusals are reported at most once every ${settings.intervalMinutes} minutes.`
+    ].join("\n")
+  };
 }
 
 function clearWait(): void {

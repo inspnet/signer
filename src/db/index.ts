@@ -1158,7 +1158,7 @@ export function mailStats(): {
     (getDb().prepare(`SELECT COUNT(*) as c FROM mail_log WHERE ${since}${where}`).get() as { c: number }).c;
   const processed24h = count("");
   const signed24h = count(" AND status = 'signed'");
-  const failed24h = count(" AND status IN ('error', 'deferred')");
+  const failed24h = count(" AND status IN ('error', 'deferred', 'rejected')");
   const recent = (
     getDb()
       .prepare(
