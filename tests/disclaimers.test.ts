@@ -94,6 +94,13 @@ describe("disclaimers by domain", () => {
   });
 });
 
+describe("between the signature and the disclaimer", () => {
+  it("always leaves a line break", () => {
+    const html = testSignature({ from: "scott@inspired.co", to: "ada@contoso.example" }).htmlPreview;
+    expect(html).toContain("<br><p>Inspired Ltd, registered in England.</p>");
+  });
+});
+
 describe("GET /api/domains/names", () => {
   it("lists the organisation's domains, primary first, for the rule editors", async () => {
     const res = await app.inject({ method: "GET", url: "/api/domains/names", headers: { cookie: cookieHeader } });

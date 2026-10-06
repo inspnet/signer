@@ -1315,7 +1315,9 @@ function SentItems() {
               <ol className="mt-2 space-y-1">
                 {check.steps.map((s) => (
                   <li key={s.step} className="flex gap-2">
-                    <span className={`w-4 font-bold ${s.ok ? "text-emerald-700" : "text-red-700"}`}>{s.ok ? "✓" : "✕"}</span>
+                    <span className={`w-4 font-bold ${!s.ok ? "text-red-700" : s.warn ? "text-amber-700" : "text-emerald-700"}`}>
+                      {!s.ok ? "✕" : s.warn ? "!" : "✓"}
+                    </span>
                     <span className="min-w-0">
                       <span className="font-medium">{s.step}</span>
                       <span className="text-slate-600 break-words"> — {s.detail}</span>
@@ -1388,7 +1390,9 @@ function SentItems() {
           </p>
           <p>
             <strong className="text-ink">Every mailbox:</strong> Entra admin center → App registrations → the Signer app → API
-            permissions → Microsoft Graph → Application → Mail.ReadWrite → Grant admin consent.
+            permissions → Add a permission → <strong className="text-ink">Microsoft Graph</strong> → Application permissions →
+            Mail.ReadWrite → Grant admin consent. Not the Mail.ReadWrite under &quot;Office 365 Exchange Online&quot;: that is a
+            different permission, which Graph ignores.
           </p>
           <p>
             <strong className="text-ink">Only the people in scope (recommended):</strong> leave it out of Entra and grant it in
