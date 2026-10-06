@@ -58,6 +58,10 @@ Detection is client-markup, not a mailbox API. Each client wraps the previous me
 
 New messages (no quote markup) still get the signature at the end of the body. Bottom-posted mail — quoted history first, new text after it — is detected by a quote block at the start with real reply text after it, and the signature is placed after that reply.
 
+**Only the body text is rewritten.** Signer finds the message's HTML and plain-text parts by scanning its MIME boundaries, adds the signature to them and splices them back. Attachments and everything else pass through byte for byte, so a 100 MB message needs about twice its size in memory, not several decoded copies. Messages up to `SMTP_MAX_MESSAGE_MB` (150 MB, Exchange Online's maximum) are accepted.
+
+**Uploaded images are embedded.** A logo or banner uploaded in the designer travels inside each message as an inline image (`cid:`), so recipients see it without "download pictures" prompts and nothing is fetched from Signer when a message is opened. Images given as links (`https://…`, or a directory photo URL) stay links.
+
 ---
 
 ## Deploy

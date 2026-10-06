@@ -13,6 +13,19 @@ import {
 } from "lucide-react";
 import { api, type Block, type DirectoryPerson, type Signature } from "../api/client";
 import { DIRECTORY_FIELDS } from "../lib/fields";
+
+/** Fonts mail clients have, each with fallbacks for recipients who do not. */
+const FONTS = [
+  ["Aptos, Calibri, Arial, sans-serif", "Aptos"],
+  ["Calibri, Arial, sans-serif", "Calibri"],
+  ["Arial, Helvetica, sans-serif", "Arial"],
+  ["'Segoe UI', Tahoma, Arial, sans-serif", "Segoe UI"],
+  ["Verdana, Geneva, sans-serif", "Verdana"],
+  ["Tahoma, Arial, sans-serif", "Tahoma"],
+  ["'Trebuchet MS', Arial, sans-serif", "Trebuchet MS"],
+  ["Georgia, 'Times New Roman', serif", "Georgia"],
+  ["'Times New Roman', Times, serif", "Times New Roman"]
+] as const;
 import {
   LiveBlock,
   blockLabel,
@@ -150,7 +163,7 @@ export function DesignerPage() {
   }
 
   return (
-    <div className="h-dvh flex flex-col bg-[#ece7dc] text-ink">
+    <div className="h-dvh flex flex-col bg-paper text-ink">
       <header className="h-14 shrink-0 bg-ink text-slate-200 flex items-center px-4 gap-3">
         <Link to="/signatures" className="text-sm text-slate-400 hover:text-white">
           Templates
@@ -219,7 +232,7 @@ export function DesignerPage() {
         <section className="flex-1 overflow-auto p-8" onClick={() => setSelected(null)}>
           <div className="max-w-[680px] mx-auto">
             <div className="letter" onClick={(e) => e.stopPropagation()}>
-              <div className="bg-[#f7f4ee] px-7 py-4 border-b border-line text-[13px] space-y-1.5">
+              <div className="bg-[#f8fafc] px-7 py-4 border-b border-line text-[13px] space-y-1.5">
                 <div className="flex gap-3">
                   <span className="w-12 text-slate-400 shrink-0">From</span>
                   <span>
@@ -312,11 +325,29 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
     <div className="space-y-3 text-sm">
       <div className="font-medium capitalize">{blockLabel(block)}</div>
       {block.type === "text" && (
-        <label className="block">
-          Content
-          <textarea className="input mt-1 h-24" value={block.content} onChange={(e) => onChange({ ...block, content: e.target.value })} />
-          <span className="text-[11px] text-slate-400">Use {"{{field}}"} for directory values.</span>
-        </label>
+        <>
+          <label className="block">
+            Content
+            <textarea className="input mt-1 h-24" value={block.content} onChange={(e) => onChange({ ...block, content: e.target.value })} />
+            <span className="text-[11px] text-slate-400">Use {"{{field}}"} for directory values.</span>
+          </label>
+          <label className="block">
+            Link
+            <input
+              className="input mt-1"
+              value={block.href || ""}
+              onChange={(e) => onChange({ ...block, href: e.target.value })}
+              placeholder="https://…, mailto:…, tel:… or {{website}}"
+            />
+            <span className="text-[11px] text-slate-400">Optional. Makes the whole text clickable.</span>
+          </label>
+          {block.href && (
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={Boolean(block.underline)} onChange={(e) => onChange({ ...block, underline: e.target.checked })} />
+              Underline the link
+            </label>
+          )}
+        </>
       )}
       {block.type === "field" && (
         <>
@@ -359,11 +390,20 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
               value={block.style?.fontFamily || "Calibri, Arial, sans-serif"}
               onChange={(e) => onChange({ ...block, style: { ...block.style, fontFamily: e.target.value } })}
             >
-              <option>Calibri, Arial, sans-serif</option>
-              <option>Arial, Helvetica, sans-serif</option>
-              <option>Georgia, serif</option>
-              <option>Tahoma, sans-serif</option>
+              {FONTS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+              {!FONTS.some(([value]) => value === (block.style?.fontFamily || FONTS[1][0])) && (
+                <option value={block.style?.fontFamily}>{block.style?.fontFamily}</option>
+              )}
             </select>
+            {(block.style?.fontFamily ?? "").startsWith("Aptos") && (
+              <span className="block mt-1 text-xs text-slate-500">
+                Aptos is Microsoft 365&apos;s default font. Recipients without it see Calibri, then Arial; so may this preview.
+              </span>
+            )}
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label>
@@ -397,10 +437,7 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
       )}
       {(block.type === "image" || block.type === "banner") && (
         <>
-          <label className="block">
-            Image URL
-            <input className="input mt-1" value={block.src} onChange={(e) => onChange({ ...block, src: e.target.value })} placeholder="https://… or {{photoUrl}}" />
-          </label>
+          <ImageSource src={block.src} onChange={(src) => onChange({ ...block, src })} />
           <label className="block">
             Width
             <input type="number" className="input mt-1" value={block.width ?? 140} onChange={(e) => onChange({ ...block, width: Number(e.target.value) })} />
@@ -491,6 +528,60 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Where an image comes from: an upload (embedded in every email, so
+ * recipients see it without loading external images) or a link.
+ */
+function ImageSource({ src, onChange }: { src: string; onChange: (src: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const uploaded = src.startsWith("/uploads/");
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <label className={`btn btn-ghost cursor-pointer ${busy ? "opacity-50" : ""}`}>
+          {busy ? "Uploading…" : uploaded ? "Replace image" : "Upload image"}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            className="hidden"
+            disabled={busy}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (!file) return;
+              setBusy(true);
+              setError("");
+              try {
+                onChange((await api.uploadImage(file)).url);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
+        </label>
+        {uploaded && <span className="text-xs text-emerald-700">Embedded in the email</span>}
+      </div>
+      {error && <p className="text-xs text-red-700">{error}</p>}
+      <label className="block">
+        Or image link
+        <input
+          className="input mt-1"
+          value={uploaded ? "" : src}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={uploaded ? "Using the uploaded image" : "https://… or {{photoUrl}}"}
+        />
+      </label>
+      <p className="text-xs text-slate-500 leading-5">
+        Uploaded images (PNG, JPEG, GIF or WEBP, up to 8 MB; keep logos small) travel inside each email, so recipients see them
+        without &quot;download pictures&quot; prompts. Links are loaded from the web when the email is opened.
+      </p>
     </div>
   );
 }

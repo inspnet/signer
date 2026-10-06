@@ -27,7 +27,13 @@ export type MimePart = {
   encoding: string;
   disposition: string;
   children: MimePart[];
+  parent?: MimePart;
+  /** For a multipart: where its closing "--boundary--" line starts. */
+  closeAt?: number;
 };
+
+/** An image carried inside the message and referenced from the HTML as cid:<cid>. */
+export type InlineImage = { cid: string; filename: string; contentType: string; content: Buffer };
 
 const MAX_DEPTH = 20;
 
@@ -86,13 +92,24 @@ export function parsePart(buf: Buffer, start: number, end: number, depth = 0): M
     children: []
   };
   if (part.type.startsWith("multipart/") && part.params.boundary && depth < MAX_DEPTH) {
-    part.children = splitMultipart(buf, part.bodyStart, end, part.params.boundary).map((c) => parsePart(buf, c.start, c.end, depth + 1));
+    const split = splitMultipart(buf, part.bodyStart, end, part.params.boundary);
+    part.closeAt = split.closeAt;
+    part.children = split.parts.map((c) => {
+      const child = parsePart(buf, c.start, c.end, depth + 1);
+      child.parent = part;
+      return child;
+    });
   }
   return part;
 }
 
 /** Child ranges between "--boundary" lines; stops at "--boundary--". */
-function splitMultipart(buf: Buffer, start: number, end: number, boundary: string): Array<{ start: number; end: number }> {
+function splitMultipart(
+  buf: Buffer,
+  start: number,
+  end: number,
+  boundary: string
+): { parts: Array<{ start: number; end: number }>; closeAt?: number } {
   const delimiter = `--${boundary}`;
   const marks: Array<{ at: number; close: boolean; next: number }> = [];
   let pos = start;
@@ -120,7 +137,8 @@ function splitMultipart(buf: Buffer, start: number, end: number, boundary: strin
     if (buf[partEnd - 1] === 0x0d) partEnd -= 1;
     parts.push({ start: mark.next, end: Math.max(mark.next, partEnd) });
   }
-  return parts;
+  const close = marks.find((m) => m.close);
+  return { parts, closeAt: close?.at };
 }
 
 export type BodyParts = { html?: MimePart; text?: MimePart };
@@ -205,6 +223,30 @@ function textType(part: MimePart, type: string): string {
   return `${type}; charset=utf-8${extra}`;
 }
 
+function base64Lines(data: Buffer): string {
+  return (data.toString("base64").match(/.{1,76}/g) ?? []).join("\r\n");
+}
+
+const quoteParam = (v: string) => `"${v.replace(/[\\"]/g, "\\$&").replace(/[\r\n]/g, "")}"`;
+
+function imagePart(img: InlineImage): string {
+  return [
+    `Content-Type: ${img.contentType}; name=${quoteParam(img.filename)}`,
+    "Content-Transfer-Encoding: base64",
+    `Content-ID: <${img.cid}>`,
+    `Content-Disposition: inline; filename=${quoteParam(img.filename)}`,
+    "",
+    base64Lines(img.content)
+  ].join("\r\n");
+}
+
+const newBoundary = (kind: string) => `signer-${kind}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+
+/** The HTML and its images as one multipart/related body (headers excluded). */
+function relatedBody(boundary: string, htmlPart: string, images: InlineImage[]): string {
+  return [htmlPart, ...images.map(imagePart)].map((p) => `--${boundary}\r\n${p}\r\n`).join("") + `--${boundary}--`;
+}
+
 function encodedText(type: string, text: string): string {
   return `Content-Type: ${type}; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${quotedPrintable(text)}`;
 }
@@ -213,32 +255,59 @@ function encodedText(type: string, text: string): string {
  * The message with its body replaced. `html` goes into the HTML part; `text`
  * into the plain-text part. A message with only plain text gains an HTML
  * version next to it (multipart/alternative), as the signature needs HTML.
+ * `images` are the signature's embedded images: they join the HTML's
+ * multipart/related container, or the HTML part is wrapped in a new one.
  */
-export function spliceBody(buf: Buffer, root: MimePart, body: BodyParts, html: string, text: string): Buffer {
+export function spliceBody(buf: Buffer, root: MimePart, body: BodyParts, html: string, text: string, images: InlineImage[] = []): Buffer {
   const edits: Array<{ start: number; end: number; bytes: Buffer }> = [];
   const replacePart = (part: MimePart, content: string) =>
     edits.push({ start: part.start, end: part.end, bytes: Buffer.from(content, "utf8") });
+  const insertAt = (at: number, content: string) => edits.push({ start: at, end: at, bytes: Buffer.from(content, "utf8") });
+  /** A part's own headers minus its content headers, for a wrapper that takes its place. */
+  const outerHeaders = (part: MimePart, contentType: string) => {
+    const kept = headerLines(part.headerText).filter((l) => !/^content-(type|transfer-encoding)\s*:/i.test(l));
+    const headers = [...kept, `Content-Type: ${contentType}`];
+    if (part === root && !kept.some((l) => /^mime-version\s*:/i.test(l))) headers.push("MIME-Version: 1.0");
+    return headers.join("\r\n");
+  };
 
   // The part is now UTF-8, so a charset in an HTML <meta> tag must say so too.
   html = html.replace(/(<meta\b[^>]*charset=["']?)[\w-]+/gi, "$1utf-8");
+
   if (body.html) {
-    replacePart(body.html, `${rewriteHeaders(body.html, textType(body.html, "text/html"))}\r\n\r\n${quotedPrintable(html)}`);
+    const part = body.html;
+    const related = part.parent?.type === "multipart/related" && part.parent.closeAt !== undefined ? part.parent : null;
+    if (!images.length || related) {
+      replacePart(part, `${rewriteHeaders(part, textType(part, "text/html"))}\r\n\r\n${quotedPrintable(html)}`);
+      if (images.length && related) {
+        const boundary = related.params.boundary!;
+        insertAt(related.closeAt!, images.map((img) => `--${boundary}\r\n${imagePart(img)}\r\n`).join(""));
+      }
+    } else {
+      const boundary = newBoundary("rel");
+      const inner = encodedText("text/html", html);
+      replacePart(
+        part,
+        `${outerHeaders(part, `multipart/related; type="text/html"; boundary="${boundary}"`)}\r\n\r\n${relatedBody(boundary, inner, images)}`
+      );
+    }
   }
   if (body.text && body.html) {
     replacePart(body.text, `${rewriteHeaders(body.text, textType(body.text, "text/plain"))}\r\n\r\n${quotedPrintable(text)}`);
   }
   if (body.text && !body.html) {
     // Plain text only: the part becomes multipart/alternative with both versions.
-    const boundary = `signer-alt-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-    const alternative =
-      `--${boundary}\r\n${encodedText("text/plain", text)}\r\n` + `--${boundary}\r\n${encodedText("text/html", html)}\r\n` + `--${boundary}--`;
-    const kept = headerLines(body.text.headerText).filter((l) => !/^content-(type|transfer-encoding)\s*:/i.test(l));
-    const headers = [...kept, `Content-Type: multipart/alternative; boundary="${boundary}"`];
-    if (body.text === root && !kept.some((l) => /^mime-version\s*:/i.test(l))) headers.push("MIME-Version: 1.0");
-    replacePart(body.text, `${headers.join("\r\n")}\r\n\r\n${alternative}`);
+    const boundary = newBoundary("alt");
+    let htmlVersion = encodedText("text/html", html);
+    if (images.length) {
+      const rel = newBoundary("rel");
+      htmlVersion = `Content-Type: multipart/related; type="text/html"; boundary="${rel}"\r\n\r\n${relatedBody(rel, htmlVersion, images)}`;
+    }
+    const alternative = `--${boundary}\r\n${encodedText("text/plain", text)}\r\n--${boundary}\r\n${htmlVersion}\r\n--${boundary}--`;
+    replacePart(body.text, `${outerHeaders(body.text, `multipart/alternative; boundary="${boundary}"`)}\r\n\r\n${alternative}`);
   }
 
-  edits.sort((a, b) => a.start - b.start);
+  edits.sort((a, b) => a.start - b.start || a.end - b.end);
   const out: Buffer[] = [];
   let pos = 0;
   for (const edit of edits) {

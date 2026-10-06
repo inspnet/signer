@@ -1,6 +1,7 @@
 import { entraConfigured } from "../config.js";
 import { domainNames, getSetting, getUserByEmail, setSetting } from "../db/index.js";
 import { entraToken } from "../directory/sync.js";
+import type { InlineImage } from "./mime.js";
 
 /**
  * Sent Items update (Microsoft 365): after Signer returns a signed message,
@@ -43,7 +44,6 @@ export type SentItemsResult = {
   result: "updated" | "not-found" | "skipped" | "failed";
   detail: string;
 };
-export type InlineImage = { cid: string; filename: string; contentType: string; content: Buffer };
 /** What the Sent Items copy should show: the signed body and the images it embeds. */
 export type SignedCopy = { html: string; text: string; inline: InlineImage[] };
 
