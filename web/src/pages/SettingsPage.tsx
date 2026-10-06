@@ -1169,7 +1169,7 @@ function Alerts() {
         </div>
         {saved.last && (
           <p className="text-xs text-slate-500">
-            Last {saved.last.kind === "test" ? "test" : saved.last.kind === "recovery" ? "recovery notice" : "alert"}:{" "}
+            Last {{ test: "test", recovery: "recovery notice", refusal: "refusal alert", problem: "alert" }[saved.last.kind]}:{" "}
             {new Date(saved.last.at).toLocaleString()} — <span className={saved.last.ok ? "" : "text-red-700"}>{saved.last.detail}</span>
           </p>
         )}
@@ -1181,6 +1181,11 @@ function Alerts() {
           change it). A message that is signed, passed through, or delivered unsigned resets that wait, so a short burst does
           not send mail. One email then describes the deferrals. Nothing further is sent for that outage, and one more email
           follows when a message is handed back.
+        </p>
+        <p>
+          <strong className="text-ink">Refused messages</strong> are reported separately and sooner: about a minute after the first
+          one (to collect a burst), then at most once per interval. A refusal means DMARC failed for one of your domains and the
+          sender got a bounce.
         </p>
         <p>
           Alerts go out through Mailgun&apos;s HTTPS API, not through Signer&apos;s own mail path, so they still arrive when port 25 is

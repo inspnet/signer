@@ -5,7 +5,7 @@ import ipaddr from "ipaddr.js";
 import { config } from "../config.js";
 import { logMail } from "../db/index.js";
 import { processRawMessage } from "../mail/process.js";
-import { getAllowedCidrs } from "./ipranges.js";
+import { getAllowedCidrs, initAllowedCidrs, startRangeRefresh } from "./ipranges.js";
 import { relayTargetFor } from "./route.js";
 import { describeFailure, RelayError, sameFailure } from "./explain.js";
 import { noteMailOutcome } from "../alerts/index.js";
@@ -85,9 +85,13 @@ function createServer(banner: string): SMTPServer {
     key: tlsOptions().key,
     cert: tlsOptions().cert,
     size: config.smtp.maxMessageMb * 1024 * 1024,
-    onConnect(_session, callback) {
-      // Who may submit is decided from the message: a listed From domain that
-      // passes DMARC. Connector IP ranges change, so they are not a gate.
+    onConnect(session, callback) {
+      // Gate one: only Microsoft's or Google's published sending hosts may
+      // connect (SMTP_ALLOWED_CIDRS, re-resolved twice a day). Gate two, DMARC
+      // for listed domains, is checked per message in handleMessage.
+      if (!ipAllowed(session.remoteAddress)) {
+        return callback(new Error("Relay access denied"));
+      }
       callback();
     },
     onMailFrom(_address, _session, callback) {
@@ -185,7 +189,9 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
     });
   } catch (err) {
     if (err instanceof InboundRefusal) {
-      record({ ...entry(), status: "rejected", detail: err.message });
+      // A 451 is retried by Microsoft or Google, so it is a deferral; only a
+      // 550 bounces back to the sender.
+      record({ ...entry(), status: err.responseCode === 451 ? "deferred" : "rejected", detail: err.message });
       throw err;
     }
     throw err;
@@ -245,9 +251,17 @@ async function deliverUnsigned(
 }
 
 export async function startSmtp(): Promise<SMTPServer[]> {
-  console.log(
-    "[signer] SMTP accepts mail only for domains listed in Settings → Domains, and only when DMARC passes. Sender IP ranges are not checked."
-  );
+  const resolved = await initAllowedCidrs();
+  if (resolved.invalid.length) {
+    console.warn(`[signer] Ignoring unrecognised SMTP_ALLOWED_CIDRS entries: ${resolved.invalid.join(", ")}`);
+  }
+  if (resolved.cidrs.length) {
+    const sources = [...resolved.live, ...resolved.stale.map((p) => `${p} (cached)`)];
+    const from = sources.length ? ` from ${sources.join(", ")}` : "";
+    console.log(`[signer] SMTP allowlist: ${resolved.cidrs.length} ranges${from}`);
+  }
+  startRangeRefresh();
+  console.log("[signer] Listed domains must pass DMARC; other domains pass through unsigned.");
 
   const servers: SMTPServer[] = [];
   const ports = [...new Set([config.smtp.port, config.smtp.submissionPort, config.smtp.altPort])].filter((p) => p > 0);

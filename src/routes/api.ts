@@ -47,6 +47,7 @@ import {
 } from "../db/index.js";
 import { DIRECTORY_FIELDS } from "../directory/fields.js";
 import { syncDirectory } from "../directory/sync.js";
+import { getRangeStatus } from "../smtp/ipranges.js";
 import { composeTestMessage, signatureHtml, testSignature } from "../mail/process.js";
 import { relayUpstream } from "../smtp/server.js";
 import { perDomainMx, returnRouteFor } from "../smtp/route.js";
@@ -78,8 +79,8 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const ASSIGNABLE_ROLES: Role[] = ["owner", "admin", "editor", "designer", "user"];
 
 /**
- * Kept so older portal builds that read this object still get a shape they
- * understand. Acceptance is no longer an IP list.
+ * What the SMTP allowlist actually resolved to, so an admin can confirm the
+ * provider tokens expanded rather than guessing from the deploy log.
  */
 function smtpAllowlistStatus(): {
   configured: string[];
@@ -88,18 +89,15 @@ function smtpAllowlistStatus(): {
   usingCache: string[];
   ignored: string[];
   openToAll: boolean;
-  enforced: false;
-  note: string;
 } {
+  const status = getRangeStatus();
   return {
     configured: config.smtp.allowedCidrs,
-    rangeCount: 0,
-    resolvedFrom: [],
-    usingCache: [],
-    ignored: [],
-    openToAll: false,
-    enforced: false,
-    note: "Sender IP ranges are not used. Mail is accepted only for domains in Settings → Domains that pass DMARC."
+    rangeCount: status?.cidrs.length ?? 0,
+    resolvedFrom: status?.live ?? [],
+    usingCache: status?.stale ?? [],
+    ignored: status?.invalid ?? [],
+    openToAll: !(status?.cidrs.length ?? 0)
   };
 }
 

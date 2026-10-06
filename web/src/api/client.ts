@@ -121,7 +121,7 @@ export type AlertConfig = {
   intervalMinutes: number;
   apiKeySet: boolean;
   configured: boolean;
-  last: { at: string; ok: boolean; kind: "problem" | "recovery" | "test"; detail: string } | null;
+  last: { at: string; ok: boolean; kind: "problem" | "recovery" | "refusal" | "test"; detail: string } | null;
 };
 
 export type SentItemsConfig = {

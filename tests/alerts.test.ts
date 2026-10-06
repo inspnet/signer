@@ -220,3 +220,51 @@ describe("alerting when mail is not sending", () => {
     expect(sent).toHaveLength(0);
   });
 });
+
+describe("alerting when Signer refuses a message", () => {
+  const dmarcFail = "DMARC did not pass for inspired.co (spf=fail, dkim=none)";
+
+  it("alerts about a minute after the first refusal, gathering the others in that minute", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    configure();
+    alerts.noteMailOutcome("rejected", dmarcFail, "scott@inspired.co");
+    await vi.advanceTimersByTimeAsync(30_000);
+    alerts.noteMailOutcome("rejected", dmarcFail, "ada@inspired.co");
+    expect(sent).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.form.get("subject")).toBe("Signer: refused 2 messages on signer.inspired.co");
+    const text = sent[0]!.form.get("text")!;
+    expect(text).toContain("2× (from inspired.co): DMARC did not pass for inspired.co");
+    expect(text).toContain("bounce");
+    expect(text).not.toContain("scott@inspired.co");
+    expect(alerts.lastAlert()).toMatchObject({ ok: true, kind: "refusal" });
+  });
+
+  it("sends at most one refusal alert per interval, and does not start the outage alert", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    configure();
+    alerts.noteMailOutcome("rejected", dmarcFail, "scott@inspired.co");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sent).toHaveLength(1);
+
+    alerts.noteMailOutcome("rejected", dmarcFail, "ada@inspired.co");
+    await vi.advanceTimersByTimeAsync(14 * 60_000);
+    expect(sent).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]!.form.get("subject")).toBe("Signer: refused 1 message on signer.inspired.co");
+
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(sent).toHaveLength(2);
+  });
+
+  it("stays quiet when alerts are off", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    configure({ enabled: false });
+    alerts.noteMailOutcome("rejected", dmarcFail, "scott@inspired.co");
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(sent).toHaveLength(0);
+  });
+});

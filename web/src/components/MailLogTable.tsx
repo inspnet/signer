@@ -9,10 +9,10 @@ const STATUS: Record<string, { label: string; tone: string; meaning: string }> =
   "loop-prevented": { label: "Already signed", tone: "text-slate-600", meaning: "Already processed; handed back unchanged" },
   error: { label: "Unsigned", tone: "text-amber-800", meaning: "Delivered without a signature" },
   deferred: { label: "Deferred", tone: "text-red-700", meaning: "Not delivered yet; Microsoft 365 / Google will retry" },
-  rejected: { label: "Rejected", tone: "text-red-700", meaning: "Refused: the From domain is not listed, or DMARC did not pass" }
+  rejected: { label: "Refused", tone: "text-red-700", meaning: "Refused by Signer, so the sender got a bounce" }
 };
 
-const PROBLEM = new Set(["error", "deferred"]);
+const PROBLEM = new Set(["error", "deferred", "rejected"]);
 
 export function MailLogTable({ rows, empty }: { rows: MailLogRow[]; empty: string }) {
   return (
@@ -50,7 +50,7 @@ export function MailLogTable({ rows, empty }: { rows: MailLogRow[]; empty: strin
                     <td colSpan={5} className="px-3 pb-3">
                       <div
                         className={`rounded-lg p-3 text-xs leading-5 break-words ${
-                          r.status === "deferred" ? "bg-red-50 text-red-900" : "bg-amber-50 text-amber-900"
+                          r.status === "error" ? "bg-amber-50 text-amber-900" : "bg-red-50 text-red-900"
                         }`}
                       >
                         <span className="font-semibold">{status.meaning}. </span>
