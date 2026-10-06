@@ -300,8 +300,10 @@ New-TransportRule -Name "Identify messages to send to Signer" `
 Then go live in two steps:
 
 ```powershell
-# 1. Pilot: enable the rule for one mailbox only.
-Set-TransportRule -Identity "Identify messages to send to Signer" -From "pilot.user@clientdomain.com" -Enabled $true
+# 1. Pilot: limit the rule to one mailbox, then switch it on.
+#    (Set-TransportRule has no -Enabled; Enable-/Disable-TransportRule do that.)
+Set-TransportRule -Identity "Identify messages to send to Signer" -From "pilot.user@clientdomain.com"
+Enable-TransportRule -Identity "Identify messages to send to Signer"
 
 # 2. Go live: remove the pilot condition so every sender goes through Signer.
 Set-TransportRule -Identity "Identify messages to send to Signer" -From $null
@@ -309,6 +311,8 @@ Set-TransportRule -Identity "Identify messages to send to Signer" -From $null
 # Roll back at any time; mail stops going through Signer straight away.
 Disable-TransportRule -Identity "Identify messages to send to Signer" -Confirm:$false
 ```
+
+**Before enabling the rule**, run **Settings → Connectors → Test the return path**. It talks SMTP to the host each domain's signed mail goes back to, as a real message would: DNS, connect, TLS, sender, one of your mailboxes, then an address outside the organisation. It stops before sending, so nothing is delivered. The outside address is the real check: Exchange Online accepts mail for your own domains from anyone, but only relays out for Signer when the "Signer receive" connector recognises this server. Each failed step comes with the likely cause (port 25 blocked by Linode, a certificate mismatch, `5.7.64`, the connector IP).
 
 During the pilot, have that person send to an external address and to a colleague. Check **Activity** in the portal and `journalctl -u signer`, and look at the received messages. **Rule Tester → Send test to me** shows a signature in a real mailbox even before the rule is enabled.
 
@@ -383,12 +387,25 @@ How the portal updater stays safe:
 
 #### Troubleshooting
 
+**Start with Activity.** Every message that did not go through cleanly says why underneath it:
+
+- **Unsigned**: signing failed, so the message was delivered without a signature (`FAILURE_MODE=fail-open`).
+- **Deferred**: Signer could not hand the message back to Microsoft 365 or Google. It answered 451, so the provider keeps the message queued and retries. The line names the host it tried, whether that came from the domain's MX, a return host or `UPSTREAM_HOST`, the error, and what to check. Then run **Settings → Connectors → Test the return path** to reproduce it step by step without sending anything.
+
+On the server, the same detail is in the database:
+
+```bash
+sudo -u signer sqlite3 /var/lib/signer/signer.db \
+  "SELECT received_at, status, sender, detail FROM mail_log WHERE status IN ('error','deferred') ORDER BY id DESC LIMIT 10;"
+```
+
 - **The script says Signer did not start** → it prints the last log lines; `journalctl -u signer -n 100` shows more. Fatal configuration errors are printed as `[signer] FATAL:`: a missing `SESSION_SECRET`, a `TLS_CERT_PATH` that cannot be read, a numeric `TRUST_PROXY`, or an `SMTP_ALLOWED_CIDRS` provider that cannot be resolved with nothing cached (see [Provider IP ranges](#provider-ip-ranges)).
 - **No certificate** → the hostname did not resolve to this server when the script ran, or port 80 was unreachable. Fix DNS and re-run the script.
 - **`SMTP port 25 unavailable (EACCES)`** → Signer was started outside `signer.service`, so it lacks the capability to bind low ports. Start it with `systemctl` only.
 - **`SMTP port 25 unavailable (EADDRINUSE)`** → another mail server holds the port. `ss -ltnp 'sport = :25'`, stop it, re-run the script.
 - **Microsoft 365 queues mail with a TLS error (`4.4.317`)** → STARTTLS is not offered or the certificate does not match `signer.example.com`. Check `TLS_CERT_PATH`, `SMTP_HOSTNAME`, and the `openssl s_client` output above.
 - **`550 5.7.64 TenantAttribution; Relay Access Denied`** → the return connector is not an `OnPremises` connector, is disabled, or does not list this server's IPv4. See [Connect Microsoft 365](#connect-microsoft-365).
+- **Activity shows Deferred with `timed out` / `ETIMEDOUT` on port 25** → Linode's outbound SMTP block is still in place ([step 4](#4-ask-linode-to-lift-the-smtp-restriction)). `nc -vz -w 10 <tenant>.mail.protection.outlook.com 25` from the server confirms it.
 - **Mail is delayed or bounces after passing through Signer** → outbound SMTP is still blocked (re-run the script to check) or `UPSTREAM_*` is wrong. Signer defers mail it cannot hand back, so the provider's queue holds it until the block is lifted or the provider gives up.
 - **Relay fails with a certificate error** → upstream TLS is verified by default. Against a real `mail.protection.outlook.com` or `smtp-relay.gmail.com` host, this means the hostname is wrong. Only set `UPSTREAM_TLS_REJECT_UNAUTHORIZED=false` for a lab host with a self-signed certificate: it lets anyone on the network path read and alter the mail.
 - **Exchange or Gmail cannot connect at all** → if `SMTP_ALLOWED_CIDRS` is set, the connecting host is outside it. `GET /api/settings` shows what the allowlist resolved to. If a Linode Cloud Firewall is attached, it must allow 25 and 587 as well.

@@ -50,6 +50,8 @@ import { composeTestMessage, signatureHtml, testSignature } from "../mail/proces
 import { relayUpstream } from "../smtp/server.js";
 import { perDomainMx, returnRouteFor } from "../smtp/route.js";
 import { detectPublicIPv4 } from "../system/publicip.js";
+import { diagnoseRelay } from "../smtp/diagnose.js";
+import { describeFailure } from "../smtp/explain.js";
 import {
   checkForUpdates,
   currentVersion,
@@ -307,7 +309,7 @@ export function registerApi(app: FastifyInstance): void {
         await relayUpstream(raw, from, [user.email]);
       } catch (err) {
         return reply.code(502).send({
-          error: `Could not hand the test to ${config.upstream.host}: ${err instanceof Error ? err.message : String(err)}`
+          error: `Could not hand the test back: ${describeFailure(err)}`
         });
       }
       audit(user.email, "send_test", from, `as received by ${to}`);
@@ -619,7 +621,8 @@ export function registerApi(app: FastifyInstance): void {
           `New-TransportRule -Name "Identify messages to send to Signer" -FromScope InOrganization -ExceptIfHeaderContainsMessageHeader $header -ExceptIfHeaderContainsWords "true" -RouteMessageOutboundConnector "Signer send" -Enabled $false`,
           ``,
           `# Pilot: turn it on for one mailbox only.`,
-          `Set-TransportRule -Identity "Identify messages to send to Signer" -From "pilot.user@yourdomain.com" -Enabled $true`,
+          `Set-TransportRule -Identity "Identify messages to send to Signer" -From "pilot.user@yourdomain.com"`,
+          `Enable-TransportRule -Identity "Identify messages to send to Signer"`,
           ``,
           `# Go live: remove the pilot condition so it applies to every sender.`,
           `Set-TransportRule -Identity "Identify messages to send to Signer" -From $null`,
@@ -654,6 +657,38 @@ export function registerApi(app: FastifyInstance): void {
       ]
     };
   });
+
+  // Talks SMTP to the host signed mail goes back to, stopping before DATA.
+  app.post(
+    "/api/diagnostics/relay",
+    { config: { rateLimit: { max: 20, timeWindow: 10 * 60 * 1000 } } },
+    async (req, reply) => {
+      const admin = requireRole(["admin"], req, reply);
+      if (!admin) return;
+      const body = (req.body ?? {}) as { domain?: string; externalRecipient?: string };
+      const domains = listDomains();
+      const listed = domains.map((d) => d.name);
+      const domain = String(body.domain || domains.find((d) => d.primary)?.name || listed[0] || "").trim().toLowerCase();
+      if (!domain) return reply.code(400).send({ error: "Add a domain under Settings → Domains first." });
+      if (!listed.includes(domain)) return reply.code(400).send({ error: `${domain} is not on the domain list.` });
+      const external = String(body.externalRecipient ?? "").trim().toLowerCase();
+      if (external && !EMAIL.test(external)) return reply.code(400).send({ error: "The outside address must be an email address." });
+      if (external && listed.includes(external.split("@")[1]!)) {
+        return reply.code(400).send({
+          error: "Use an address outside your organisation: relaying to an outside address is what shows the \"Signer receive\" connector works."
+        });
+      }
+      const adminDomain = admin.email.split("@")[1] ?? "";
+      const result = await diagnoseRelay({
+        domain,
+        sender: adminDomain === domain ? admin.email : undefined,
+        internalRecipient: listed.includes(adminDomain) ? admin.email : undefined,
+        externalRecipient: external || undefined
+      });
+      audit(admin.email, "relay_diagnostic", domain, result.ok ? "passed" : (result.steps.find((s) => s.status === "fail")?.step ?? "failed"));
+      return result;
+    }
+  );
 
   app.get("/api/analytics", async (req, reply) => {
     if (!requireUser(req, reply)) return;

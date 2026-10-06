@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type DirectoryPerson, type UpdateCheck, type UpdateStatus } from "../api/client";
+import { api, type DirectoryPerson, type RelayDiagnosis, type UpdateCheck, type UpdateStatus } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
 
 export function SettingsPage() {
@@ -49,6 +49,7 @@ function MailFlow() {
     <div className="mt-6 space-y-6 max-w-4xl">
       <p className="text-stone-600 leading-7">{(data.notes as string[]).join(" ")}</p>
       <PublicIpNote ip={data.publicIp as PublicIpInfo} />
+      <ReturnPathTest />
       <section className="panel p-5">
         <h2 className="font-semibold text-lg">Microsoft 365 / Exchange Online</h2>
         <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-stone-700">
@@ -672,5 +673,108 @@ function PublicIpNote({ ip }: { ip: PublicIpInfo }) {
       )}
       {ip.warning && <p className="mt-2 text-amber-800">{ip.warning}</p>}
     </div>
+  );
+}
+
+const STEP_TONE = { ok: "text-teal-800", warn: "text-amber-800", fail: "text-red-700", skipped: "text-stone-500" } as const;
+const STEP_MARK = { ok: "✓", warn: "!", fail: "✕", skipped: "–" } as const;
+
+/**
+ * Talks SMTP to the host signed mail goes back to, as a real message would,
+ * and stops before sending anything. The outside recipient shows whether
+ * Microsoft 365 recognises Signer through the "Signer receive" connector.
+ */
+function ReturnPathTest() {
+  const [domains, setDomains] = useState<string[]>([]);
+  const [domain, setDomain] = useState("");
+  const [external, setExternal] = useState("");
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<RelayDiagnosis | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    void api.domains().then((d) => {
+      setDomains(d.domains.map((x) => x.name));
+      setDomain(d.domains.find((x) => x.primary)?.name ?? d.domains[0]?.name ?? "");
+    });
+    if (window.location.hash === "#return-path") {
+      setTimeout(() => document.getElementById("return-path")?.scrollIntoView({ behavior: "smooth" }), 100);
+    }
+  }, []);
+  const run = async () => {
+    setRunning(true);
+    setError("");
+    setResult(null);
+    try {
+      setResult(await api.diagnoseRelay({ domain, externalRecipient: external || undefined }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunning(false);
+    }
+  };
+  return (
+    <section id="return-path" className="panel p-5">
+      <h2 className="font-semibold text-lg">Test the return path</h2>
+      <p className="mt-2 text-sm text-stone-600 leading-6">
+        Connects to where signed mail for the domain goes back to, exactly as a real message would: TLS, sender, then one of your
+        mailboxes and an address outside your organisation. It stops before sending, so nothing is delivered. The outside address
+        is the real test for Microsoft 365: it only accepts it when the &quot;Signer receive&quot; connector recognises this server.
+      </p>
+      <form
+        className="mt-4 flex flex-wrap gap-2 items-end"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void run();
+        }}
+      >
+        <label className="text-sm">
+          <span className="block text-stone-500 mb-1">Domain</span>
+          <select className="input" value={domain} onChange={(e) => setDomain(e.target.value)}>
+            {domains.map((d) => (
+              <option key={d}>{d}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-sm flex-1 min-w-[14rem]">
+          <span className="block text-stone-500 mb-1">Outside address (optional)</span>
+          <input
+            className="input w-full"
+            placeholder="signer-relay-check@example.com"
+            value={external}
+            onChange={(e) => setExternal(e.target.value)}
+          />
+        </label>
+        <button className="btn btn-primary" disabled={running || !domain}>
+          {running ? "Testing…" : "Run test"}
+        </button>
+      </form>
+      {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
+      {result && (
+        <div className="mt-4">
+          <p className={`text-sm font-semibold ${result.ok ? "text-teal-800" : "text-red-700"}`}>
+            {result.ok
+              ? `Signed mail from ${result.domain} can get back to ${result.target.host}.`
+              : `Signed mail from ${result.domain} cannot get back to ${result.target.host}.`}
+          </p>
+          <p className="text-xs text-stone-500 mt-1">
+            {result.target.host}:{result.target.port}, {result.target.tls}
+            {result.target.auth ? ", signed in" : ""}: {result.target.route}
+          </p>
+          <ol className="mt-3 space-y-1 text-sm">
+            {result.steps.map((s, i) => (
+              <li key={i} className="flex gap-2">
+                <span className={`w-4 font-bold ${STEP_TONE[s.status]}`}>{STEP_MARK[s.status]}</span>
+                <span className="min-w-0">
+                  <span className="font-medium">{s.step}</span>
+                  <span className="text-stone-600 break-words"> — {s.detail}</span>
+                  {s.ms > 0 && <span className="text-stone-400 text-xs"> {s.ms} ms</span>}
+                </span>
+              </li>
+            ))}
+          </ol>
+          {result.hint && <p className="mt-3 rounded-lg bg-amber-50 text-amber-900 p-3 text-sm leading-6">{result.hint}</p>}
+        </div>
+      )}
+    </section>
   );
 }

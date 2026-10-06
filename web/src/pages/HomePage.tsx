@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { Link } from "react-router-dom";
+import { MailLogTable } from "../components/MailLogTable";
 
 export function HomePage() {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.home>> | null>(null);
@@ -39,36 +40,8 @@ export function HomePage() {
         </Link>
       </div>
       <h2 className="mt-12 text-lg font-semibold">Recent processing</h2>
-      <div className="mt-3 panel overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-mist text-left text-stone-500">
-            <tr>
-              <th className="p-3 font-medium">When</th>
-              <th className="font-medium">Sender</th>
-              <th className="font-medium">Subject</th>
-              <th className="font-medium">Status</th>
-              <th className="font-medium">ms</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.stats.recent.length === 0 && (
-              <tr>
-                <td className="p-4 text-stone-500" colSpan={5}>
-                  No messages yet. Point Exchange or Google connectors at this host.
-                </td>
-              </tr>
-            )}
-            {data.stats.recent.map((r, i) => (
-              <tr key={i} className="border-t border-line">
-                <td className="p-3">{new Date(r.receivedAt).toLocaleString()}</td>
-                <td>{r.sender}</td>
-                <td>{r.subject}</td>
-                <td>{r.status}</td>
-                <td>{r.processingMs}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="mt-3">
+        <MailLogTable rows={data.stats.recent.slice(0, 10)} empty="No messages yet. Point Exchange or Google connectors at this host." />
       </div>
     </div>
   );

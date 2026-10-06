@@ -77,3 +77,29 @@ export async function returnRouteFor(senderEmail: string, lookup: MxLookup = dns
   cache.set(domain, { route, expires: Date.now() + ttl });
   return route;
 }
+
+/** How to connect to the return host: the same settings for real mail and the diagnostic. */
+export type RelayTarget = {
+  route: ReturnRoute;
+  host: string;
+  port: number;
+  secure: boolean;
+  servername: string;
+  rejectUnauthorized: boolean;
+  auth?: { user: string; pass: string };
+};
+
+export async function relayTargetFor(senderEmail: string, lookup?: MxLookup): Promise<RelayTarget> {
+  const route = await returnRouteFor(senderEmail, lookup);
+  // Exchange Online endpoints take mail on 25; the configured upstream keeps its own port and settings.
+  const configured = route.via === "default";
+  return {
+    route,
+    host: route.host,
+    port: route.via === "mx" ? 25 : config.upstream.port,
+    secure: configured ? config.upstream.secure : false,
+    servername: configured ? config.upstream.tlsServername || route.host : route.host,
+    rejectUnauthorized: config.upstream.tlsRejectUnauthorized,
+    auth: configured && config.upstream.user ? { user: config.upstream.user, pass: config.upstream.pass } : undefined
+  };
+}

@@ -109,6 +109,25 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+export type MailLogRow = {
+  receivedAt: string;
+  sender: string;
+  recipients: string[];
+  subject: string;
+  status: string;
+  detail: string;
+  processingMs: number;
+};
+
+export type RelayDiagnosis = {
+  ok: boolean;
+  domain: string;
+  sender: string;
+  target: { host: string; port: number; via: string; route: string; tls: string; auth: boolean };
+  steps: Array<{ step: string; status: "ok" | "warn" | "fail" | "skipped"; detail: string; ms: number }>;
+  hint: string;
+};
+
 export type ReturnRoute = { host: string; via: "override" | "mx" | "default"; detail: string };
 
 export type DomainRecord = {
@@ -156,7 +175,7 @@ export const api = {
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST", body: "{}" }),
   home: () =>
     request<{
-      stats: { processed24h: number; signed24h: number; failed24h: number; recent: Array<{ receivedAt: string; sender: string; subject: string; status: string; processingMs: number }> };
+      stats: { processed24h: number; signed24h: number; failed24h: number; recent: MailLogRow[] };
       signatures: number;
       disclaimers: number;
       users: number;
@@ -218,5 +237,7 @@ export const api = {
   checkUpdates: () => request<UpdateCheck>("/api/system/updates/check", { method: "POST", body: "{}" }),
   updateStatus: () => request<UpdateStatus>("/api/system/updates/status"),
   installUpdate: () => request<{ ok: boolean }>("/api/system/updates/install", { method: "POST", body: "{}" }),
-  analytics: () => request<{ processed24h: number; signed24h: number; failed24h: number; recent: Array<{ receivedAt: string; sender: string; subject: string; status: string; processingMs: number }> }>("/api/analytics")
+  diagnoseRelay: (body: { domain?: string; externalRecipient?: string }) =>
+    request<RelayDiagnosis>("/api/diagnostics/relay", { method: "POST", body: JSON.stringify(body) }),
+  analytics: () => request<{ processed24h: number; signed24h: number; failed24h: number; recent: MailLogRow[] }>("/api/analytics")
 };

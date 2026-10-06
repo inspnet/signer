@@ -1127,51 +1127,38 @@ export function pruneDirectoryUsers(source: string, seenIds: string[]): number {
   return stale.length;
 }
 
+export type MailLogRow = {
+  receivedAt: string;
+  sender: string;
+  recipients: string[];
+  subject: string;
+  status: string;
+  detail: string;
+  signatureId: string | null;
+  processingMs: number;
+};
+
 export function mailStats(): {
   processed24h: number;
   signed24h: number;
   failed24h: number;
-  recent: Array<{
-    receivedAt: string;
-    sender: string;
-    subject: string;
-    status: string;
-    signatureId: string | null;
-    processingMs: number;
-  }>;
+  recent: MailLogRow[];
 } {
-  const processed24h = (
-    getDb().prepare("SELECT COUNT(*) as c FROM mail_log WHERE received_at >= datetime('now', '-1 day')").get() as {
-      c: number;
-    }
-  ).c;
-  const signed24h = (
+  // received_at is an ISO timestamp, so compare against one in the same format.
+  const since = "received_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day')";
+  const count = (where: string) =>
+    (getDb().prepare(`SELECT COUNT(*) as c FROM mail_log WHERE ${since}${where}`).get() as { c: number }).c;
+  const processed24h = count("");
+  const signed24h = count(" AND status = 'signed'");
+  const failed24h = count(" AND status IN ('error', 'deferred')");
+  const recent = (
     getDb()
       .prepare(
-        "SELECT COUNT(*) as c FROM mail_log WHERE received_at >= datetime('now', '-1 day') AND status = 'signed'"
+        `SELECT received_at as receivedAt, sender, recipients, subject, status, detail, signature_id as signatureId, processing_ms as processingMs
+         FROM mail_log ORDER BY id DESC LIMIT 50`
       )
-      .get() as { c: number }
-  ).c;
-  const failed24h = (
-    getDb()
-      .prepare(
-        "SELECT COUNT(*) as c FROM mail_log WHERE received_at >= datetime('now', '-1 day') AND status = 'error'"
-      )
-      .get() as { c: number }
-  ).c;
-  const recent = getDb()
-    .prepare(
-      `SELECT received_at as receivedAt, sender, subject, status, signature_id as signatureId, processing_ms as processingMs
-       FROM mail_log ORDER BY id DESC LIMIT 25`
-    )
-    .all() as Array<{
-    receivedAt: string;
-    sender: string;
-    subject: string;
-    status: string;
-    signatureId: string | null;
-    processingMs: number;
-  }>;
+      .all() as Array<Omit<MailLogRow, "recipients"> & { recipients: string }>
+  ).map((row) => ({ ...row, recipients: parseJson<string[]>(row.recipients, []) }));
   return { processed24h, signed24h, failed24h, recent };
 }
 

@@ -6,7 +6,8 @@ import { config } from "../config.js";
 import { logMail } from "../db/index.js";
 import { processRawMessage } from "../mail/process.js";
 import { getAllowedCidrs, initAllowedCidrs, startRangeRefresh } from "./ipranges.js";
-import { returnRouteFor } from "./route.js";
+import { relayTargetFor } from "./route.js";
+import { describeFailure, RelayError } from "./explain.js";
 
 export function ipAllowed(ip: string, cidrs: string[] = getAllowedCidrs()): boolean {
   if (!cidrs.length) return true;
@@ -43,27 +44,26 @@ function tlsOptions(): { key?: Buffer; cert?: Buffer } {
 export async function relayUpstream(raw: Buffer, envelopeFrom: string, envelopeTo: string[]): Promise<void> {
   // Each sender domain goes back to its own Microsoft 365 endpoint where that
   // can be determined (see route.ts); otherwise UPSTREAM_HOST.
-  const route = await returnRouteFor(envelopeFrom);
-  if (!route.host) {
+  const target = await relayTargetFor(envelopeFrom);
+  if (!target.host) {
     throw new Error("UPSTREAM_HOST is not configured; cannot return mail to Microsoft 365 / Google");
   }
-  const configured = route.via === "default";
   const transporter = nodemailer.createTransport({
-    host: route.host,
-    // Exchange Online endpoints take mail on 25; the configured upstream keeps its own port and settings.
-    port: route.via === "mx" ? 25 : config.upstream.port,
-    secure: configured ? config.upstream.secure : false,
-    tls: {
-      servername: configured ? config.upstream.tlsServername || route.host : route.host,
-      rejectUnauthorized: config.upstream.tlsRejectUnauthorized
-    },
-    auth: configured && config.upstream.user ? { user: config.upstream.user, pass: config.upstream.pass } : undefined,
+    host: target.host,
+    port: target.port,
+    secure: target.secure,
+    tls: { servername: target.servername, rejectUnauthorized: target.rejectUnauthorized },
+    auth: target.auth,
     name: config.smtp.hostname
   });
-  await transporter.sendMail({
-    envelope: { from: envelopeFrom, to: envelopeTo },
-    raw
-  });
+  try {
+    await transporter.sendMail({
+      envelope: { from: envelopeFrom, to: envelopeTo },
+      raw
+    });
+  } catch (err) {
+    throw new RelayError(target, err);
+  }
 }
 
 function createServer(banner: string): SMTPServer {
@@ -127,6 +127,8 @@ export function hasProcessedHeader(raw: Buffer): boolean {
 
 /** Activity logging must never change the SMTP answer for mail already delivered. */
 function record(entry: Parameters<typeof logMail>[0]): void {
+  // The same reason Activity shows, for journalctl.
+  if (entry.status === "error" || entry.status === "deferred") console.warn(`[signer] Message ${entry.status}: ${entry.detail ?? ""}`);
   try {
     logMail(entry);
   } catch (err) {
@@ -134,65 +136,84 @@ function record(entry: Parameters<typeof logMail>[0]): void {
   }
 }
 
+const RETRY = "Refused with 451, so Microsoft 365 / Google keep it queued and retry.";
+const sentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
+
 async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<void> {
   const started = Date.now();
   const envelopeFrom = session.envelope.mailFrom ? session.envelope.mailFrom.address : "";
   const envelopeTo = session.envelope.rcptTo.map((r) => r.address);
+  const entry = () => ({
+    messageId: "",
+    sender: envelopeFrom,
+    recipients: envelopeTo,
+    subject: "",
+    signatureId: null,
+    disclaimerIds: [] as string[],
+    campaignIds: [] as string[],
+    processingMs: Date.now() - started
+  });
+
   if (hasProcessedHeader(raw)) {
-    await relayUpstream(raw, envelopeFrom, envelopeTo);
-    record({
-      messageId: "",
-      sender: envelopeFrom,
-      recipients: envelopeTo,
-      subject: "",
-      signatureId: null,
-      disclaimerIds: [],
-      campaignIds: [],
-      status: "loop-prevented",
-      processingMs: Date.now() - started
-    });
+    try {
+      await relayUpstream(raw, envelopeFrom, envelopeTo);
+    } catch (err) {
+      const detail = `${sentence(`Already signed, but handing it back failed: ${describeFailure(err)}`)} ${RETRY}`;
+      record({ ...entry(), status: "deferred", detail });
+      throw err;
+    }
+    record({ ...entry(), status: "loop-prevented" });
     return;
   }
 
+  let result: Awaited<ReturnType<typeof processRawMessage>>;
   try {
-    const result = await processRawMessage(raw, envelopeFrom, envelopeTo);
-    await relayUpstream(result.raw, envelopeFrom, envelopeTo);
-    record({
-      messageId: "",
-      sender: envelopeFrom,
-      recipients: envelopeTo,
-      subject: "",
-      signatureId: result.signatureId,
-      disclaimerIds: result.disclaimerIds,
-      campaignIds: result.campaignIds,
-      status: result.skipped ? "passed-through" : "signed",
-      detail: result.reason,
-      processingMs: Date.now() - started
-    });
+    result = await processRawMessage(raw, envelopeFrom, envelopeTo);
   } catch (err) {
-    record({
-      messageId: "",
-      sender: envelopeFrom,
-      recipients: envelopeTo,
-      subject: "",
-      signatureId: null,
-      disclaimerIds: [],
-      campaignIds: [],
-      status: "error",
-      detail: err instanceof Error ? err.message : String(err),
-      processingMs: Date.now() - started
-    });
-    if (config.failureMode === "fail-open") {
-      try {
-        await relayUpstream(raw, envelopeFrom, envelopeTo);
-      } catch (relayErr) {
-        console.error("Fail-open relay also failed", relayErr);
-        throw err;
-      }
-      return;
-    }
-    throw err;
+    return deliverUnsigned(raw, envelopeFrom, envelopeTo, `Signing failed: ${describeFailure(err)}`, err, entry);
   }
+  try {
+    await relayUpstream(result.raw, envelopeFrom, envelopeTo);
+  } catch (err) {
+    const stage = result.skipped ? "Handing it back failed" : "Signed, but handing it back failed";
+    return deliverUnsigned(raw, envelopeFrom, envelopeTo, `${stage}: ${describeFailure(err)}`, err, entry);
+  }
+  record({
+    ...entry(),
+    signatureId: result.signatureId,
+    disclaimerIds: result.disclaimerIds,
+    campaignIds: result.campaignIds,
+    status: result.skipped ? "passed-through" : "signed",
+    detail: result.reason
+  });
+}
+
+/**
+ * The fallback when a message could not be signed and returned. The log says
+ * which: "error" means it was delivered without a signature, "deferred" means
+ * it was not delivered and Microsoft 365 / Google hold it and retry.
+ */
+async function deliverUnsigned(
+  raw: Buffer,
+  envelopeFrom: string,
+  envelopeTo: string[],
+  why: string,
+  cause: unknown,
+  entry: () => Omit<Parameters<typeof logMail>[0], "status">
+): Promise<void> {
+  if (config.failureMode !== "fail-open") {
+    record({ ...entry(), status: "deferred", detail: `${sentence(why)} Not delivered (FAILURE_MODE=fail-closed). ${RETRY}` });
+    throw cause;
+  }
+  try {
+    await relayUpstream(raw, envelopeFrom, envelopeTo);
+  } catch (relayErr) {
+    const same = cause instanceof Error && relayErr instanceof Error && cause.message === relayErr.message;
+    const again = same ? "Sending it unsigned failed the same way." : sentence(`Sending it unsigned also failed: ${describeFailure(relayErr)}`);
+    record({ ...entry(), status: "deferred", detail: `${sentence(why)} ${again} ${RETRY}` });
+    throw relayErr;
+  }
+  record({ ...entry(), status: "error", detail: `${sentence(why)} Delivered without a signature (FAILURE_MODE=fail-open).` });
 }
 
 export async function startSmtp(): Promise<SMTPServer[]> {
