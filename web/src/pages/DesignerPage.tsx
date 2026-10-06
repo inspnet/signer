@@ -127,7 +127,7 @@ export function DesignerPage() {
     setSig((s) => (s ? fn(s) : s));
   }
 
-  if (!sig) return <p className="p-8 text-stone-500">Loading editor…</p>;
+  if (!sig) return <p className="p-8 text-slate-500">Loading editor…</p>;
   const current = sig;
 
   function add(block: Block) {
@@ -151,17 +151,17 @@ export function DesignerPage() {
 
   return (
     <div className="h-dvh flex flex-col bg-[#ece7dc] text-ink">
-      <header className="h-14 shrink-0 bg-ink text-[#e7e0d4] flex items-center px-4 gap-3">
-        <Link to="/signatures" className="text-sm text-stone-400 hover:text-white">
+      <header className="h-14 shrink-0 bg-ink text-slate-200 flex items-center px-4 gap-3">
+        <Link to="/signatures" className="text-sm text-slate-400 hover:text-white">
           Templates
         </Link>
-        <span className="text-stone-600">/</span>
+        <span className="text-slate-600">/</span>
         <input
           className="font-semibold bg-transparent outline-none flex-1 text-white min-w-0"
           value={sig.name}
           onChange={(e) => patch((s) => ({ ...s, name: e.target.value }))}
         />
-        <label className="hidden md:flex items-center gap-2 text-sm text-stone-400">
+        <label className="hidden md:flex items-center gap-2 text-sm text-slate-400">
           Preview as
           <select
             className="bg-white/10 text-white rounded-md px-2 py-1 outline-none"
@@ -176,8 +176,8 @@ export function DesignerPage() {
           </select>
         </label>
         {dirty && <span className="text-xs text-amber-200 bg-amber-900/40 px-2 py-0.5 rounded-md">Unsaved</span>}
-        {status && <span className="text-xs text-teal-200">{status}</span>}
-        <button className="btn btn-ghost bg-transparent text-stone-300 border-white/15 hover:bg-white/10" onClick={() => navigate("/signatures")}>
+        {status && <span className="text-xs text-sky-200">{status}</span>}
+        <button className="btn btn-ghost bg-transparent text-slate-300 border-white/15 hover:bg-white/10" onClick={() => navigate("/signatures")}>
           Close
         </button>
         <button className="btn btn-primary" disabled={saving} onClick={() => void save()}>
@@ -186,7 +186,7 @@ export function DesignerPage() {
       </header>
 
       <div className="shrink-0 bg-card/80 border-b border-line px-4 py-2 flex items-center gap-1 overflow-x-auto">
-        <span className="text-[11px] uppercase tracking-[0.14em] text-stone-500 mr-2 shrink-0">Insert</span>
+        <span className="text-[11px] uppercase tracking-[0.14em] text-slate-500 mr-2 shrink-0">Insert</span>
         {chips.map((item) => (
           <button key={item.label} className="chip" onClick={() => add(item.make())} type="button">
             <item.icon size={14} />
@@ -221,45 +221,45 @@ export function DesignerPage() {
             <div className="letter" onClick={(e) => e.stopPropagation()}>
               <div className="bg-[#f7f4ee] px-7 py-4 border-b border-line text-[13px] space-y-1.5">
                 <div className="flex gap-3">
-                  <span className="w-12 text-stone-400 shrink-0">From</span>
+                  <span className="w-12 text-slate-400 shrink-0">From</span>
                   <span>
-                    {String(user.displayName || "Sender")} <span className="text-stone-500">&lt;{String(user.email || "")}&gt;</span>
+                    {String(user.displayName || "Sender")} <span className="text-slate-500">&lt;{String(user.email || "")}&gt;</span>
                   </span>
                 </div>
                 <div className="flex gap-3">
-                  <span className="w-12 text-stone-400 shrink-0">To</span>
+                  <span className="w-12 text-slate-400 shrink-0">To</span>
                   <span>Ada Lovelace &lt;ada@contoso.com&gt;</span>
                 </div>
                 <div className="flex gap-3">
-                  <span className="w-12 text-stone-400 shrink-0">Subject</span>
+                  <span className="w-12 text-slate-400 shrink-0">Subject</span>
                   <span className="font-medium">Project update</span>
                 </div>
               </div>
               <div className="bg-white px-7 py-8 min-h-[320px]">
-                <p className="text-[15px] text-stone-600 mb-8 leading-7">Hello — thanks for the note. See you Thursday.</p>
+                <p className="text-[15px] text-slate-600 mb-8 leading-7">Hello — thanks for the note. See you Thursday.</p>
                 <div className="space-y-1 border-l-2 border-accent/30 pl-4">
                   {sig.design.blocks.map((b) => (
                     <LiveBlock key={b.id} block={b} user={user} selected={selected} onSelect={setSelected} />
                   ))}
                   {sig.design.blocks.length === 0 && (
-                    <p className="text-stone-400 text-sm">Use Insert above. Click a line to style it.</p>
+                    <p className="text-slate-400 text-sm">Use Insert above. Click a line to style it.</p>
                   )}
                 </div>
               </div>
             </div>
-            <p className="text-center text-xs text-stone-500 mt-4">Live values from the directory. Empty fields stay as placeholders until the person has data.</p>
+            <p className="text-center text-xs text-slate-500 mt-4">Live values from the directory. Empty fields stay as placeholders until the person has data.</p>
           </div>
         </section>
 
         <aside className="w-[300px] shrink-0 border-l border-line overflow-auto bg-card flex flex-col">
           <div className="p-4 border-b border-line">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-stone-500 mb-2">Layers</p>
+            <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500 mb-2">Layers</p>
             <div className="space-y-0.5">
               {flattenBlocks(sig.design.blocks).map(({ block, depth }) => (
                 <button
                   key={block.id}
                   type="button"
-                  className={`w-full text-left text-xs rounded-md px-2 py-1.5 ${selected === block.id ? "bg-accent text-white" : "hover:bg-mist text-stone-600"}`}
+                  className={`w-full text-left text-xs rounded-md px-2 py-1.5 ${selected === block.id ? "bg-accent text-white" : "hover:bg-mist text-slate-600"}`}
                   style={{ paddingLeft: 8 + depth * 12 }}
                   onClick={() => setSelected(block.id)}
                 >
@@ -269,8 +269,8 @@ export function DesignerPage() {
             </div>
           </div>
           <div className="p-4 flex-1">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-stone-500 mb-3">Inspector</p>
-            {!selectedBlock && <p className="text-sm text-stone-500">Select a line on the letter, or a layer on the left of this panel.</p>}
+            <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500 mb-3">Inspector</p>
+            {!selectedBlock && <p className="text-sm text-slate-500">Select a line on the letter, or a layer on the left of this panel.</p>}
             {selectedBlock && (
               <>
                 <div className="flex gap-1 mb-4">
@@ -315,7 +315,7 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
         <label className="block">
           Content
           <textarea className="input mt-1 h-24" value={block.content} onChange={(e) => onChange({ ...block, content: e.target.value })} />
-          <span className="text-[11px] text-stone-400">Use {"{{field}}"} for directory values.</span>
+          <span className="text-[11px] text-slate-400">Use {"{{field}}"} for directory values.</span>
         </label>
       )}
       {block.type === "field" && (

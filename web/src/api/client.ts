@@ -242,6 +242,7 @@ export const api = {
   saveMyDetails: (body: Record<string, string>) => request("/api/me/details", { method: "PUT", body: JSON.stringify(body) }),
   admins: () => request<{ superAdmin: string; roles: Array<{ email: string; role: string }> }>("/api/admins"),
   saveAdmin: (email: string, role: string) => request("/api/admins", { method: "PUT", body: JSON.stringify({ email, role }) }),
+  removeAdmin: (email: string) => request(`/api/admins/${encodeURIComponent(email)}`, { method: "DELETE" }),
   settings: () => request<Record<string, unknown>>("/api/settings"),
   saveSettings: (body: object) => request("/api/settings", { method: "PUT", body: JSON.stringify(body) }),
   mailFlow: () => request<Record<string, unknown>>("/api/mail-flow"),

@@ -8,7 +8,7 @@ export function HomePage() {
   useEffect(() => {
     void api.home().then(setData);
   }, []);
-  if (!data) return <p className="text-stone-500">Loading…</p>;
+  if (!data) return <p className="text-slate-500">Loading…</p>;
   const cards = [
     { label: "Processed, 24h", value: data.stats.processed24h },
     { label: "Signed, 24h", value: data.stats.signed24h },
@@ -17,17 +17,17 @@ export function HomePage() {
   ];
   return (
     <div>
-      <p className="text-xs uppercase tracking-[0.16em] text-accent-2 font-semibold">Overview</p>
-      <h1 className="display text-4xl mt-1">Today’s mail</h1>
-      <p className="mt-3 text-stone-600 max-w-2xl leading-7">
+      <p className="text-xs uppercase tracking-[0.14em] text-slate-400 font-semibold">Overview</p>
+      <h1 className="text-[28px] leading-9 font-bold tracking-tight text-ink mt-1">Today’s mail</h1>
+      <p className="mt-3 text-slate-600 max-w-2xl leading-7">
         Signer stamps signatures after send, inside your Exchange or Google routing. Senders cannot remove them, including
         on iOS Mail.
       </p>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-8">
         {cards.map((c) => (
           <div key={c.label} className="panel p-5">
-            <div className="text-sm text-stone-500">{c.label}</div>
-            <div className="display text-4xl mt-2">{c.value}</div>
+            <div className="stat-label">{c.label}</div>
+            <div className="stat-value">{c.value}</div>
           </div>
         ))}
       </div>

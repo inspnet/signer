@@ -40,7 +40,7 @@ export function CampaignsPage() {
             <div key={c.id} className="panel p-4 flex justify-between items-center">
               <div>
                 <div className="font-medium">{c.name}</div>
-                <div className="text-sm text-stone-500">{c.enabled ? "Enabled" : "Disabled"}</div>
+                <div className="text-sm text-slate-500">{c.enabled ? "Enabled" : "Disabled"}</div>
               </div>
               <button
                 className="text-rose-700 text-sm"

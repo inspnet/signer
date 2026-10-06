@@ -92,17 +92,17 @@ export function TesterPage() {
           </div>
           {error && <p className="text-rose-700 text-sm">{error}</p>}
           {sendState.message && (
-            <p className={`text-sm ${sendState.ok ? "text-teal-800" : "text-rose-700"}`}>{sendState.message}</p>
+            <p className={`text-sm ${sendState.ok ? "text-emerald-700" : "text-rose-700"}`}>{sendState.message}</p>
           )}
           {canSend && (
-            <p className="text-xs text-stone-500">
+            <p className="text-xs text-slate-500">
               Send test delivers the result to <strong>{user?.email}</strong> only, through the same return path real mail
               uses, from the address in From.
             </p>
           )}
         </form>
         <div className="panel p-5">
-          {!result && <p className="text-stone-500 text-sm">Run a test to see which signature, campaigns, and disclaimers apply.</p>}
+          {!result && <p className="text-slate-500 text-sm">Run a test to see which signature, campaigns, and disclaimers apply.</p>}
           {result && (
             <>
               <div className="text-sm mb-3">
@@ -112,7 +112,7 @@ export function TesterPage() {
               <div className="mt-4 space-y-2">
                 {result.details.map((d) => (
                   <details key={d.id} className="border border-line rounded-lg p-2 text-sm">
-                    <summary className={d.applied ? "text-teal-800" : "text-stone-600"}>
+                    <summary className={d.applied ? "text-emerald-700" : "text-slate-600"}>
                       {d.kind}: {d.name} — {d.applied ? "applied" : "not applied"}
                     </summary>
                     <ul className="mt-2 space-y-1">

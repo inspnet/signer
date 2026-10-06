@@ -4,9 +4,9 @@ import type { MailLogRow } from "../api/client";
 
 /** What each status means for the message, in the admin's terms. */
 const STATUS: Record<string, { label: string; tone: string; meaning: string }> = {
-  signed: { label: "Signed", tone: "text-teal-800", meaning: "Signed and handed back" },
-  "passed-through": { label: "Passed through", tone: "text-stone-600", meaning: "No signature applied; handed back unchanged" },
-  "loop-prevented": { label: "Already signed", tone: "text-stone-600", meaning: "Already processed; handed back unchanged" },
+  signed: { label: "Signed", tone: "text-emerald-700", meaning: "Signed and handed back" },
+  "passed-through": { label: "Passed through", tone: "text-slate-600", meaning: "No signature applied; handed back unchanged" },
+  "loop-prevented": { label: "Already signed", tone: "text-slate-600", meaning: "Already processed; handed back unchanged" },
   error: { label: "Unsigned", tone: "text-amber-800", meaning: "Delivered without a signature" },
   deferred: { label: "Deferred", tone: "text-red-700", meaning: "Not delivered yet; Microsoft 365 / Google will retry" }
 };
@@ -17,7 +17,7 @@ export function MailLogTable({ rows, empty }: { rows: MailLogRow[]; empty: strin
   return (
     <div className="panel overflow-x-auto">
       <table className="w-full text-sm">
-        <thead className="bg-mist text-left text-stone-500">
+        <thead className="table-head">
           <tr>
             <th className="p-3 font-medium">When</th>
             <th className="font-medium pr-3">From</th>
@@ -71,7 +71,7 @@ export function MailLogTable({ rows, empty }: { rows: MailLogRow[]; empty: strin
           })}
           {rows.length === 0 && (
             <tr>
-              <td className="p-4 text-stone-500" colSpan={5}>
+              <td className="p-4 text-slate-500" colSpan={5}>
                 {empty}
               </td>
             </tr>
