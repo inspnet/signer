@@ -267,16 +267,17 @@ Then sign in at `https://signer.example.com` as the super admin and:
 
 ### Connect Microsoft 365
 
-**Settings → Connectors** in the portal shows these commands with your hostname and header filled in. Run them in Exchange Online PowerShell (`Connect-ExchangeOnline`):
+**Settings → Connectors** in the portal shows these commands with your hostname, header and this server's public IPv4 filled in. Signer reads the IP from its network interface and warns if your hostname's DNS points somewhere else. Run them in Exchange Online PowerShell (`Connect-ExchangeOnline`):
 
 ```powershell
 $smartHost = "signer.example.com"            # SMTP_HOSTNAME
-$signerIp  = "<server public IPv4>"          # printed by the install script
+$signerIp  = "<server public IPv4>"          # filled in by the portal; also printed by the install script
 $header    = "X-Signer-MessageProcessed"     # PROCESSED_HEADER
 
-# Microsoft 365 → Signer. Exchange Online delivers to smart hosts on port 25 and
-# checks that Signer's certificate is valid for $smartHost.
-New-OutboundConnector -Name "Signer send" -ConnectorType Partner -UseMXRecord $false `
+# Microsoft 365 → Signer ("to your organization's email server"). Exchange Online
+# delivers to smart hosts on port 25 and checks that Signer's certificate is valid
+# for $smartHost.
+New-OutboundConnector -Name "Signer send" -ConnectorType OnPremises -UseMXRecord $false `
   -SmartHosts $smartHost -TlsSettings DomainValidation -TlsDomain $smartHost `
   -IsTransportRuleScoped $true -CloudServicesMailEnabled $true -Enabled $true
 
@@ -316,7 +317,7 @@ Notes:
 - **The return connector must be `OnPremises`.** With a `Partner` inbound connector, Exchange accepts the signed message but refuses to relay it to external recipients (`550 5.7.64 TenantAttribution; Relay Access Denied`).
 - **Some tenants create `OnPremises` connectors disabled.** Microsoft does this for tenants created since 2023 on Business Basic, Business Standard or Exchange Online Essentials. If `New-InboundConnector` warns *"created in a disabled state. Contact Support to enable it"*, open a Microsoft 365 support request. Explain that a self-hosted signature gateway returns the organisation's own outbound mail through it, then wait for Microsoft to enable it before creating the transport rule.
 - **Do not add `-RestrictDomainsToIPAddresses` or `-RestrictDomainsToCertificate`.** With `-SenderDomains *`, either one tells Exchange to reject every message to the tenant that does not come from Signer, which includes all normal inbound mail.
-- `-CloudServicesMailEnabled` keeps Exchange's internal headers on the round trip, so the returned message is still treated as sent by the organisation, and internal mail stays internal. It is the same setting commercial signature services use.
+- `-CloudServicesMailEnabled` keeps Exchange's internal headers on the round trip, so the returned message is still treated as sent by the organisation, and internal mail stays internal. It is the same setting commercial signature services use. **Exchange only accepts it on `OnPremises` connectors**, which is why both connectors are that type. With `-ConnectorType Partner`, `New-OutboundConnector` fails with *"CloudServicesMailEnabled cannot be set to true if Connector type is not OnPremises"*.
 - The transport rule only diverts in-organisation senders whose mail lacks the processed header, which is what prevents loops.
 - **Only enable the rule** after the health check, STARTTLS check and outbound SMTP all pass. While it is disabled, no mail goes through Signer.
 - **Every domain in the tenant is covered.** The connectors and rule are tenant-wide, and Signer returns each domain's mail to that domain's own Microsoft 365 endpoint ([Where signed mail goes back](#where-signed-mail-goes-back)).
@@ -468,6 +469,7 @@ See `.env.example` for the full list with comments. The keys that matter most:
 | `SESSION_SECRET` | — | **Required.** The server exits without it unless `DEMO_MODE=true` |
 | `SMTP_ALLOWED_CIDRS` | empty | CIDRs, or `microsoft` / `google`. Empty accepts mail from anyone |
 | `SMTP_RANGE_REFRESH_MINUTES` | `720` | How often provider ranges are re-resolved; `0` disables |
+| `PUBLIC_IPV4` | detected | The IPv4 shown in the connector instructions. Read from the network interface; set it only behind NAT or with several public addresses |
 | `SMTP_HOSTNAME` | `signer.local` | Name in the SMTP banner; must match the TLS certificate |
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | — | Certificate for SMTP STARTTLS. Required for Microsoft 365. If set, both must be readable or startup fails |
 | `UPSTREAM_HOST` / `UPSTREAM_PORT` | — / `25` | Where signed mail is handed back: the setup domain's MX, and the fallback for every other domain |

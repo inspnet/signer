@@ -49,6 +49,7 @@ import { getRangeStatus } from "../smtp/ipranges.js";
 import { composeTestMessage, signatureHtml, testSignature } from "../mail/process.js";
 import { relayUpstream } from "../smtp/server.js";
 import { perDomainMx, returnRouteFor } from "../smtp/route.js";
+import { detectPublicIPv4 } from "../system/publicip.js";
 import {
   checkForUpdates,
   currentVersion,
@@ -572,12 +573,15 @@ export function registerApi(app: FastifyInstance): void {
     const host = config.smtp.hostname;
     const header = config.processedHeader;
     const publicHost = new URL(config.publicUrl).host;
+    const ip = await detectPublicIPv4();
+    const signerIp = ip.address ?? "<this server's public IPv4>";
     return {
+      publicIp: ip,
       microsoft: {
         sendConnector: {
           name: "Signer send",
           from: "Office 365",
-          to: "Partner organization",
+          to: "Your organization's email server",
           // Exchange Online always delivers to a smart host on port 25.
           smartHost: host,
           tls: `Required; certificate validated against ${host}`,
@@ -604,10 +608,10 @@ export function registerApi(app: FastifyInstance): void {
         },
         powershell: [
           `$smartHost = "${host}"`,
-          `$signerIp  = "<this server's public IPv4>"`,
+          `$signerIp  = "${signerIp}"`,
           `$header    = "${header}"`,
           ``,
-          `New-OutboundConnector -Name "Signer send" -ConnectorType Partner -UseMXRecord $false -SmartHosts $smartHost -TlsSettings DomainValidation -TlsDomain $smartHost -IsTransportRuleScoped $true -CloudServicesMailEnabled $true -Enabled $true`,
+          `New-OutboundConnector -Name "Signer send" -ConnectorType OnPremises -UseMXRecord $false -SmartHosts $smartHost -TlsSettings DomainValidation -TlsDomain $smartHost -IsTransportRuleScoped $true -CloudServicesMailEnabled $true -Enabled $true`,
           ``,
           `New-InboundConnector -Name "Signer receive" -ConnectorType OnPremises -SenderDomains * -SenderIPAddresses $signerIp -RequireTls $true -CloudServicesMailEnabled $true -Enabled $true`,
           ``,
@@ -630,7 +634,9 @@ export function registerApi(app: FastifyInstance): void {
           name: "Allow Signer to return mail",
           allowedSenders: "Only addresses in my domains",
           auth: "Require TLS",
-          note: "Add this server's public IPv4 address to the SMTP relay allow list."
+          note: ip.address
+            ? `Add ${ip.address} (this server's public IPv4) to the SMTP relay allow list.`
+            : "Add this server's public IPv4 address to the SMTP relay allow list."
         },
         contentCompliance: {
           name: "Send to Signer",

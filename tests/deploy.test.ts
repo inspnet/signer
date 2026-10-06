@@ -123,6 +123,26 @@ describe("Microsoft 365 connector instructions", () => {
     expect(microsoft.powershell).not.toContain("RestrictDomainsToIPAddresses $true");
   });
 
+  it("fills in this server's public IPv4 instead of a placeholder", async () => {
+    const original = config.publicIPv4;
+    config.publicIPv4 = "198.51.100.4";
+    try {
+      const { microsoft } = await mailFlow();
+      expect(microsoft.powershell).toContain('$signerIp  = "198.51.100.4"');
+      expect(microsoft.powershell).not.toContain("<this server's public IPv4>");
+    } finally {
+      config.publicIPv4 = original;
+    }
+  });
+
+  it("only sets CloudServicesMailEnabled on OnPremises connectors, which is all Exchange accepts", async () => {
+    const { microsoft } = await mailFlow();
+    for (const line of microsoft.powershell.split("\n").filter((l) => l.includes("-CloudServicesMailEnabled $true"))) {
+      expect(line).toContain("-ConnectorType OnPremises");
+    }
+    expect(microsoft.powershell).toMatch(/New-OutboundConnector .*-ConnectorType OnPremises/);
+  });
+
   it("creates the routing rule disabled, with pilot and go-live steps", async () => {
     const { microsoft } = await mailFlow();
     const create = microsoft.powershell.split("\n").find((l) => l.startsWith("New-TransportRule"))!;
