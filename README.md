@@ -300,8 +300,10 @@ New-TransportRule -Name "Identify messages to send to Signer" `
 Then go live in two steps:
 
 ```powershell
-# 1. Pilot: enable the rule for one mailbox only.
-Set-TransportRule -Identity "Identify messages to send to Signer" -From "pilot.user@clientdomain.com" -Enabled $true
+# 1. Pilot: limit the rule to one mailbox, then switch it on.
+#    (Set-TransportRule has no -Enabled; Enable-/Disable-TransportRule do that.)
+Set-TransportRule -Identity "Identify messages to send to Signer" -From "pilot.user@clientdomain.com"
+Enable-TransportRule -Identity "Identify messages to send to Signer"
 
 # 2. Go live: remove the pilot condition so every sender goes through Signer.
 Set-TransportRule -Identity "Identify messages to send to Signer" -From $null

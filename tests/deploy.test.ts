@@ -147,7 +147,12 @@ describe("Microsoft 365 connector instructions", () => {
     const { microsoft } = await mailFlow();
     const create = microsoft.powershell.split("\n").find((l) => l.startsWith("New-TransportRule"))!;
     expect(create).toContain("-Enabled $false");
-    expect(microsoft.powershell).toMatch(/Set-TransportRule .* -From "pilot\.user@yourdomain\.com" -Enabled \$true/);
+    expect(microsoft.powershell).toMatch(/Set-TransportRule .* -From "pilot\.user@yourdomain\.com"$/m);
+    expect(microsoft.powershell).toContain('Enable-TransportRule -Identity "Identify messages to send to Signer"');
+    // Exchange's Set-TransportRule has no -Enabled parameter.
+    for (const line of microsoft.powershell.split("\n").filter((l) => l.startsWith("Set-TransportRule"))) {
+      expect(line).not.toContain("-Enabled");
+    }
     expect(microsoft.powershell).toMatch(/Set-TransportRule .* -From \$null/);
   });
 
