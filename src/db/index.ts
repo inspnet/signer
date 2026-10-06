@@ -655,6 +655,11 @@ export function setAdminRole(email: string, role: Role, grantedBy: string): void
     .run(email.toLowerCase(), role, grantedBy, new Date().toISOString());
 }
 
+/** Back to an ordinary user. Returns false when there was no role to remove. */
+export function removeAdminRole(email: string): boolean {
+  return getDb().prepare("DELETE FROM admin_roles WHERE lower(email) = ?").run(email.toLowerCase()).changes > 0;
+}
+
 export function listAdminRoles(): { email: string; role: Role }[] {
   return getDb().prepare("SELECT email, role FROM admin_roles ORDER BY email").all() as {
     email: string;

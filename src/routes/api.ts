@@ -26,6 +26,8 @@ import {
   saveSignatureRules,
   saveUpload,
   setAdminRole,
+  removeAdminRole,
+  resolveRole,
   setFieldPermissions,
   setSetting,
   setUserOverrides,
@@ -412,22 +414,45 @@ export function registerApi(app: FastifyInstance): void {
     };
   });
 
+  /**
+   * Who may change an existing role. Nobody changes their own (an admin
+   * cannot lock themselves out or out-rank the others), the super admin is
+   * set by SUPER_ADMIN_EMAIL, and owners outrank admins, so only the super
+   * admin may grant, change or remove the owner role.
+   */
+  const roleChangeRefused = (actor: { email: string; role: Role }, email: string, from: Role, to: Role | null): string | null => {
+    if (email === actor.email.toLowerCase()) return "You cannot change your own role. Ask another admin.";
+    if (config.superAdminEmail && email === config.superAdminEmail) return "The super admin is set by SUPER_ADMIN_EMAIL on the server.";
+    if ((from === "owner" || to === "owner") && actor.role !== "super_admin") return "Only the super admin can grant, change or remove the owner role.";
+    return null;
+  };
+
   app.put("/api/admins", async (req, reply) => {
     const user = requireRole(["admin"], req, reply);
     if (!user) return;
     const body = req.body as { email?: string; role?: Role };
-    if (!body.email || !body.role) return reply.code(400).send({ error: "email and role required" });
+    const email = String(body.email ?? "").trim().toLowerCase();
+    if (!email || !body.role) return reply.code(400).send({ error: "email and role required" });
+    if (!EMAIL.test(email)) return reply.code(400).send({ error: "That is not an email address." });
     if (body.role === "super_admin") return reply.code(400).send({ error: "super_admin is controlled by SUPER_ADMIN_EMAIL" });
     if (!ASSIGNABLE_ROLES.includes(body.role)) {
       return reply.code(400).send({ error: `role must be one of: ${ASSIGNABLE_ROLES.join(", ")}` });
     }
-    // Owner outranks admin, and requireRole grants owners everything. Only a
-    // super admin may create one, otherwise any admin could promote themselves.
-    if (body.role === "owner" && user.role !== "super_admin") {
-      return reply.code(403).send({ error: "Only the super admin can grant the owner role" });
-    }
-    setAdminRole(body.email, body.role, user.email);
-    audit(user.email, "set_role", body.email, body.role);
+    const refused = roleChangeRefused(user, email, resolveRole(email), body.role);
+    if (refused) return reply.code(403).send({ error: refused });
+    setAdminRole(email, body.role, user.email);
+    audit(user.email, "set_role", email, body.role);
+    return { ok: true };
+  });
+
+  app.delete("/api/admins/:email", async (req, reply) => {
+    const user = requireRole(["admin"], req, reply);
+    if (!user) return;
+    const email = (req.params as { email: string }).email.trim().toLowerCase();
+    const refused = roleChangeRefused(user, email, resolveRole(email), null);
+    if (refused) return reply.code(403).send({ error: refused });
+    if (!removeAdminRole(email)) return reply.code(404).send({ error: `${email} has no role to remove.` });
+    audit(user.email, "remove_role", email);
     return { ok: true };
   });
 
