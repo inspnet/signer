@@ -13,7 +13,7 @@ const DEFAULT_STYLE: Required<TextStyle> = {
 export function interpolate(template: string, user: DirectoryUser): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key: string) => {
     const value = (user as unknown as Record<string, unknown>)[key];
-    return value == null ? "" : String(value);
+    return value == null ? "" : escapeHtml(String(value));
   });
 }
 
@@ -30,13 +30,21 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** Keep a CSS value inside one declaration. Quotes and semicolons would break out of the attribute. */
+function cssValue(value: string | number | undefined, fallback: string): string {
+  const raw = value == null || value === "" ? fallback : String(value);
+  const cleaned = raw.replace(/[;"'\\<>{}]|[\r\n]/g, "");
+  return cleaned.trim() || fallback;
+}
+
 function styleAttr(style?: TextStyle): string {
   const s = { ...DEFAULT_STYLE, ...style };
+  const size = typeof s.fontSize === "number" && Number.isFinite(s.fontSize) ? s.fontSize : DEFAULT_STYLE.fontSize;
   const parts = [
-    `font-family:${s.fontFamily}`,
-    `font-size:${s.fontSize}pt`,
-    `color:${s.color}`,
-    `line-height:${s.lineHeight}`,
+    `font-family:${cssValue(s.fontFamily, DEFAULT_STYLE.fontFamily)}`,
+    `font-size:${size}pt`,
+    `color:${cssValue(s.color, DEFAULT_STYLE.color)}`,
+    `line-height:${cssValue(s.lineHeight, DEFAULT_STYLE.lineHeight)}`,
     "margin:0",
     "padding:0"
   ];
@@ -70,29 +78,30 @@ function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): str
     case "field": {
       const value = fieldValue(user, block.field);
       if (hideEmpty && !value) return "";
-      const text = `${block.prefix ?? ""}${escapeHtml(value)}${block.suffix ?? ""}`;
+      const text = `${escapeHtml(block.prefix ?? "")}${escapeHtml(value)}${escapeHtml(block.suffix ?? "")}`;
       let href: string | null = null;
-      if (block.link === "email" && value) href = `mailto:${value}`;
-      if (block.link === "phone" && value) href = `tel:${value.replace(/[^\d+]/g, "")}`;
-      if (block.link === "url" && value) {
-        href = value.startsWith("http") ? value : `https://${value}`;
-      }
+      if (block.link === "email" && value) href = safeHref(`mailto:${value.replace(/[\r\n]/g, "")}`);
+      if (block.link === "phone" && value) href = safeHref(`tel:${value.replace(/[^\d+]/g, "")}`);
+      if (block.link === "url" && value) href = safeHref(value);
       return `<p style="${styleAttr(block.style)}">${wrapLink(text, href)}</p>`;
     }
     case "image": {
       const src = interpolate(block.src, user).trim();
       if (!src) return "";
       const img = `<img src="${escapeHtml(src)}" width="${block.width ?? 120}" alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;outline:none;text-decoration:none;" />`;
-      return block.href ? `<a href="${escapeHtml(block.href)}">${img}</a>` : img;
+      const href = block.href ? safeHref(block.href) : null;
+      return href ? `<a href="${escapeHtml(href)}">${img}</a>` : img;
     }
     case "banner": {
       const src = interpolate(block.src, user).trim();
       if (!src) return "";
       const img = `<img src="${escapeHtml(src)}" width="${block.width ?? 460}" alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;max-width:100%;" />`;
-      return block.href ? `<a href="${escapeHtml(block.href)}">${img}</a>` : img;
+      const href = block.href ? safeHref(block.href) : null;
+      return href ? `<a href="${escapeHtml(href)}">${img}</a>` : img;
     }
     case "divider": {
-      return `<hr style="border:none;border-top:1px solid ${block.color ?? "#d1d5db"};margin:8px 0;height:${block.height ?? 1}px;" />`;
+      const height = typeof block.height === "number" && Number.isFinite(block.height) ? block.height : 1;
+      return `<hr style="border:none;border-top:1px solid ${cssValue(block.color, "#d1d5db")};margin:8px 0;height:${height}px;" />`;
     }
     case "spacer": {
       return `<div style="height:${block.height ?? 8}px;line-height:${block.height ?? 8}px;font-size:1px;">&nbsp;</div>`;
@@ -110,7 +119,8 @@ function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): str
         .map((net) => {
           const url = net.url || (net.urlField ? fieldValue(user, net.urlField) : "");
           if (!url) return "";
-          const href = url.startsWith("http") ? url : `https://${url}`;
+          const href = safeHref(url);
+          if (!href) return "";
           return `<a href="${escapeHtml(href)}" style="padding-right:6px;"><img src="${icons[net.name] ?? icons.website}" width="${size}" height="${size}" alt="${net.name}" style="border:0;" /></a>`;
         })
         .filter(Boolean);
@@ -136,8 +146,9 @@ function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): str
 export function renderDesign(input: Design, user: DirectoryUser, hideEmpty = true): string {
   // Sizes in points, as Outlook's own text is, so 12 in the designer matches 12 in Outlook.
   const design = inPoints(input);
+  const width = typeof design.width === "number" && Number.isFinite(design.width) ? design.width : 520;
   const inner = design.blocks.map((b) => renderBlock(b, user, hideEmpty)).filter(Boolean).join("");
-  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="${design.width}" style="width:${design.width}px;background:${design.background ?? "#ffffff"};border-collapse:collapse;"><tr><td style="padding:0;">${inner}</td></tr></table>`;
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="${width}" style="width:${width}px;background:${cssValue(design.background, "#ffffff")};border-collapse:collapse;"><tr><td style="padding:0;">${inner}</td></tr></table>`;
 }
 
 export function renderPlainText(html: string): string {

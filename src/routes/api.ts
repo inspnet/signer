@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { config, entraConfigured, googleLoginConfigured } from "../config.js";
-import { requireRole, requireUser } from "../auth/index.js";
+import { requireRole, requireStaff, requireUser } from "../auth/index.js";
 import {
   deleteCampaign,
   deleteDisclaimer,
@@ -47,7 +47,6 @@ import {
 } from "../db/index.js";
 import { DIRECTORY_FIELDS } from "../directory/fields.js";
 import { syncDirectory } from "../directory/sync.js";
-import { getRangeStatus } from "../smtp/ipranges.js";
 import { composeTestMessage, signatureHtml, testSignature } from "../mail/process.js";
 import { relayUpstream } from "../smtp/server.js";
 import { perDomainMx, returnRouteFor } from "../smtp/route.js";
@@ -79,8 +78,8 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const ASSIGNABLE_ROLES: Role[] = ["owner", "admin", "editor", "designer", "user"];
 
 /**
- * What the SMTP allowlist actually resolved to, so an admin can confirm the
- * provider tokens expanded rather than guessing from the deploy log.
+ * Kept so older portal builds that read this object still get a shape they
+ * understand. Acceptance is no longer an IP list.
  */
 function smtpAllowlistStatus(): {
   configured: string[];
@@ -89,15 +88,18 @@ function smtpAllowlistStatus(): {
   usingCache: string[];
   ignored: string[];
   openToAll: boolean;
+  enforced: false;
+  note: string;
 } {
-  const status = getRangeStatus();
   return {
     configured: config.smtp.allowedCidrs,
-    rangeCount: status?.cidrs.length ?? 0,
-    resolvedFrom: status?.live ?? [],
-    usingCache: status?.stale ?? [],
-    ignored: status?.invalid ?? [],
-    openToAll: !(status?.cidrs.length ?? 0)
+    rangeCount: 0,
+    resolvedFrom: [],
+    usingCache: [],
+    ignored: [],
+    openToAll: false,
+    enforced: false,
+    note: "Sender IP ranges are not used. Mail is accepted only for domains in Settings → Domains that pass DMARC."
   };
 }
 
@@ -118,7 +120,7 @@ export function registerApi(app: FastifyInstance): void {
   }));
 
   app.get("/api/home", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     const stats = mailStats();
     return {
       stats,
@@ -130,7 +132,7 @@ export function registerApi(app: FastifyInstance): void {
   });
 
   app.get("/api/signatures", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     return listSignatures().map((s) => ({
       ...s,
       design: parseJson<Design>(s.designJson, defaultProfessionalDesign()),
@@ -139,7 +141,7 @@ export function registerApi(app: FastifyInstance): void {
   });
 
   app.get("/api/signatures/:id", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     const sig = getSignature((req.params as { id: string }).id);
     if (!sig) return reply.code(404).send({ error: "Not found" });
     return { ...sig, design: parseJson<Design>(sig.designJson, defaultProfessionalDesign()) };
@@ -199,7 +201,7 @@ export function registerApi(app: FastifyInstance): void {
   });
 
   app.get("/api/signatures/:id/preview", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     const sig = getSignature((req.params as { id: string }).id);
     if (!sig) return reply.code(404).send({ error: "Not found" });
     const email = String((req.query as { email?: string }).email || req.user!.email);
@@ -209,7 +211,7 @@ export function registerApi(app: FastifyInstance): void {
   });
 
   app.get("/api/disclaimers", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     return listDisclaimers();
   });
 
@@ -236,7 +238,7 @@ export function registerApi(app: FastifyInstance): void {
   });
 
   app.get("/api/campaigns", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     return listCampaigns();
   });
 
@@ -271,7 +273,7 @@ export function registerApi(app: FastifyInstance): void {
   });
 
   app.get("/api/folders", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     return listFolders();
   });
 
@@ -283,7 +285,7 @@ export function registerApi(app: FastifyInstance): void {
   });
 
   app.post("/api/tester", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     const body = req.body as { from?: string; to?: string; subject?: string; body?: string };
     if (!body.from || !body.to) return reply.code(400).send({ error: "from and to are required" });
     return testSignature({ from: body.from, to: body.to, subject: body.subject, body: body.body });
@@ -349,12 +351,12 @@ export function registerApi(app: FastifyInstance): void {
   });
 
   app.get("/api/users", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     return listUsers();
   });
 
   app.get("/api/groups", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     return listGroups();
   });
 
@@ -367,7 +369,7 @@ export function registerApi(app: FastifyInstance): void {
   });
 
   app.get("/api/fields", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     const perms = listFieldPermissions();
     return DIRECTORY_FIELDS.map((f) => ({
       ...f,
@@ -488,7 +490,7 @@ export function registerApi(app: FastifyInstance): void {
 
   // Names only, for the rule editors: anyone who edits signatures or disclaimers can target a domain.
   app.get("/api/domains/names", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     return listDomains()
       .sort((a, b) => Number(b.primary) - Number(a.primary) || a.name.localeCompare(b.name))
       .map((d) => d.name);
@@ -897,7 +899,7 @@ export function registerApi(app: FastifyInstance): void {
   );
 
   app.get("/api/analytics", async (req, reply) => {
-    if (!requireUser(req, reply)) return;
+    if (!requireStaff(req, reply)) return;
     return mailStats();
   });
 

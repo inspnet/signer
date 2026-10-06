@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { HtmlFrame } from "../components/HtmlFrame";
 import { PageHeader } from "../components/PageHeader";
 import { useAuth } from "../layouts/Auth";
 
@@ -108,7 +109,7 @@ export function TesterPage() {
               <div className="text-sm mb-3">
                 Applied signature: <strong>{result.signature?.name || "None"}</strong>
               </div>
-              <div className="border border-line rounded-lg p-3 bg-white" dangerouslySetInnerHTML={{ __html: result.htmlPreview }} />
+              <HtmlFrame html={result.htmlPreview} className="w-full h-64 border border-line rounded-lg bg-white" />
               <div className="mt-4 space-y-2">
                 {result.details.map((d) => (
                   <details key={d.id} className="border border-line rounded-lg p-2 text-sm">

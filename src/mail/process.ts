@@ -17,11 +17,12 @@ import {
 import { emptyUser, type DirectoryUser } from "../directory/fields.js";
 import type { Design } from "./design.js";
 import { insertHtml, insertText, isReplyMessage, latestBodyText } from "./insert.js";
-import { decodeText, findBody, headerBlock, parsePart, spliceBody, type InlineImage } from "./mime.js";
+import { decodeText, findBody, headerBlock, parsePart, spliceBody, type InlineImage, type MimePart } from "./mime.js";
+import { sealProcessed } from "./stamp.js";
 import { embedImages } from "./embed.js";
 import { APTOS_STACK } from "./design.js";
 import type { SignedCopy } from "./sentitems.js";
-import { renderDesign, renderPlainText } from "./render.js";
+import { interpolate, renderDesign, renderPlainText } from "./render.js";
 import { evaluateRules, type RuleContext } from "./rules.js";
 import { defaultProfessionalDesign } from "./templates.js";
 
@@ -195,12 +196,7 @@ function matchingAll<T extends { id: string; name: string; enabled: number; rule
 }
 
 export function signatureHtml(sig: SignatureRecord, user: DirectoryUser): string {
-  if (sig.htmlOverride?.trim()) {
-    return sig.htmlOverride.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key: string) => {
-      const value = (user as unknown as Record<string, unknown>)[key];
-      return value == null ? "" : String(value);
-    });
-  }
+  if (sig.htmlOverride?.trim()) return interpolate(sig.htmlOverride, user);
   const design = parseJson<Design>(sig.designJson, defaultProfessionalDesign());
   return renderDesign(design, user);
 }
@@ -378,10 +374,20 @@ const UNSAFE_TO_REWRITE = [
 ];
 
 function unsafeToRewrite(raw: Buffer): string | null {
-  const text = raw.toString("latin1");
-  for (const re of UNSAFE_TO_REWRITE) {
-    const match = re.exec(text);
-    if (match) return match[0].replace(/\s+/g, " ").trim();
+  // Part headers only. A calendar invite is a nested part, so the top-level
+  // block is not enough, but scanning the body would let a sentence in the
+  // mail skip the signature.
+  const parts: MimePart[] = [];
+  const walk = (part: MimePart): void => {
+    parts.push(part);
+    for (const child of part.children) walk(child);
+  };
+  walk(parsePart(raw, 0, raw.length));
+  for (const part of parts) {
+    for (const re of UNSAFE_TO_REWRITE) {
+      const match = re.exec(part.headerText);
+      if (match) return match[0].replace(/\s+/g, " ").trim();
+    }
   }
   return null;
 }
@@ -395,8 +401,7 @@ function unsafeToRewrite(raw: Buffer): string | null {
 const FULL_PARSE_MAX_BYTES = 25 * 1024 * 1024;
 
 export function withProcessedHeader(raw: Buffer): Buffer {
-  const headerLine = Buffer.from(`${config.processedHeader}: true\r\n`, "utf8");
-  return Buffer.concat([headerLine, raw]);
+  return sealProcessed(raw);
 }
 
 export async function processRawMessage(raw: Buffer, envelopeFrom: string, envelopeTo: string[]): Promise<ProcessResult> {
@@ -477,7 +482,7 @@ export async function processRawMessage(raw: Buffer, envelopeFrom: string, envel
   const nextText = insertText(text, renderPlainText(snippetHtml));
   const composed = splice
     ? withProcessedHeader(spliceBody(raw, root, bodyParts, nextHtml, nextText, embedded.inline))
-    : await composeRfc822(parsed, nextHtml, nextText, embedded.inline);
+    : withProcessedHeader(await composeRfc822(parsed, nextHtml, nextText, embedded.inline));
   return {
     raw: composed,
     body: { html: nextHtml, text: nextText, inline: embedded.inline },

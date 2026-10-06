@@ -8,7 +8,8 @@ const STATUS: Record<string, { label: string; tone: string; meaning: string }> =
   "passed-through": { label: "Passed through", tone: "text-slate-600", meaning: "No signature applied; handed back unchanged" },
   "loop-prevented": { label: "Already signed", tone: "text-slate-600", meaning: "Already processed; handed back unchanged" },
   error: { label: "Unsigned", tone: "text-amber-800", meaning: "Delivered without a signature" },
-  deferred: { label: "Deferred", tone: "text-red-700", meaning: "Not delivered yet; Microsoft 365 / Google will retry" }
+  deferred: { label: "Deferred", tone: "text-red-700", meaning: "Not delivered yet; Microsoft 365 / Google will retry" },
+  rejected: { label: "Rejected", tone: "text-red-700", meaning: "Refused: the From domain is not listed, or DMARC did not pass" }
 };
 
 const PROBLEM = new Set(["error", "deferred"]);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Signature } from "../api/client";
+import { HtmlFrame } from "../components/HtmlFrame";
 
 export function SignaturesPage() {
   const [items, setItems] = useState<Signature[]>([]);
@@ -152,5 +153,5 @@ function SignatureThumb({ id }: { id: string }) {
       setHtml(preview.html);
     });
   }, [id]);
-  return <div className="origin-top-left scale-[0.62] bg-white shadow-sm p-3 w-[520px]" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <HtmlFrame html={html} className="origin-top-left scale-[0.62] bg-white shadow-sm w-[520px] h-64 border-0" />;
 }

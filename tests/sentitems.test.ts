@@ -122,6 +122,7 @@ beforeAll(() => {
     db.upsertDirectoryUser(user);
   }
   db.replaceGroups(
+    "entra",
     [
       { id: "g-pilot", name: "Signer pilot", email: "", source: "entra" },
       { id: "g-other", name: "Everyone else", email: "", source: "entra" }
