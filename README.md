@@ -4,7 +4,7 @@ Self-hosted **server-side** email signatures and legal disclaimers for Microsoft
 
 Signatures are applied in the mail flow **after** the user clicks Send — not by pushing HTML into the user's mailbox with Graph or the Gmail API, which iOS Mail and other clients can ignore or overwrite.
 
-Mail is processed on **your own server** (a Linode, set up by one script) and returned to Microsoft 365 or Google. It does not pass through a vendor SaaS, and message content is never stored. See [PRIVACY.md](PRIVACY.md) for exactly what is kept and for how long.
+Mail is processed on **your own server** (any Ubuntu 24.04 LTS host, set up by one script) and returned to Microsoft 365 or Google. It does not pass through a vendor SaaS, and message content is never stored. See [PRIVACY.md](PRIVACY.md) for exactly what is kept and for how long.
 
 ## Why connectors instead of mailbox APIs
 
@@ -26,7 +26,7 @@ Microsoft 365 or Google Workspace
         │  transport rule / content compliance
         │  (except already-processed header)
         ▼
-Signer SMTP (your Linode)
+Signer SMTP (your server)
   • look up sender in Entra / Google directory cache
   • first matching signature (priority order)
   • matching campaigns + disclaimers
@@ -66,9 +66,11 @@ New messages (no quote markup) still get the signature at the end of the body. B
 
 ## Deploy
 
-Signer runs on **one small always-on Linux server**. Inbound SMTP does not fit serverless platforms: they cannot accept SMTP, idle to zero, or time out long mail connections. The supported deployment is a **Linode** (Akamai Cloud) running **Ubuntu 24.04**, set up by one script: `deploy/install.sh`.
+Signer runs on **one small always-on Linux server**. Inbound SMTP does not fit serverless platforms: they cannot accept SMTP, idle to zero, or time out long mail connections. We recommend **Ubuntu 24.04 LTS** on any host or cloud that **allows outbound traffic on port 25**, set up by one script: `deploy/install.sh`.
 
-Why Linode: the server has to accept SMTP from Microsoft or Google and also **send** SMTP back to them. Several large clouds block outbound port 25 outright. Linode blocks it on new accounts too, but lifts the block when you ask support.
+Outbound port 25 is the hard requirement: the server has to accept SMTP from Microsoft or Google and also **send** SMTP back to them (port 587 as well for Google Workspace). Many clouds block outbound 25 by default. Some refuse to open it at all, others lift the block when you ask support. Check before you choose a provider.
+
+We run Signer on a **2 GB, 1 CPU [Linode](https://www.linode.com/lp/refer/?r=2665c81712e97c3d953b287ba817b9f557bfc1b4)** (referral link: new accounts get **$100 of free credit**), and the steps below use Linode as the example. Linode blocks outbound SMTP on new accounts but lifts it on request ([step 4](#4-make-sure-outbound-smtp-is-open)). On another provider, do the equivalent of each step.
 
 The script installs and configures:
 
@@ -87,7 +89,7 @@ Running the same script again also **updates** Signer, and keeps your configurat
 
 ### Before you start
 
-1. **A Linode account.**
+1. **A server** running Ubuntu 24.04 LTS, on a provider that allows outbound port 25 (and 587 for Google Workspace). 2 GB of memory and 1 CPU is enough.
 2. **A DNS name** for the instance, e.g. `signer.example.com`, where you can add A/AAAA records.
 3. **The super admin's email** (`SUPER_ADMIN_EMAIL`). That person must be able to sign in with Entra ID or Google.
 4. **For Microsoft 365:** the tenant's MX host (Microsoft 365 admin → Settings → Domains → the domain → MX record, e.g. `contoso-com.mail.protection.outlook.com`).
@@ -97,29 +99,29 @@ Do **not** set `DEMO_MODE=true` or `AUTH_ALLOW_DEV_LOGIN=true` on a server that 
 
 ### Ports
 
-| Direction | What it is | On Linode |
+| Direction | What it is | Example: Linode |
 | --- | --- | --- |
 | **Inbound** Microsoft 365 → Signer | Exchange Online always delivers to a smart host on **25** | Opened by the script. Not restricted by Linode. |
 | **Inbound** Google → Signer | Content compliance "change route" uses the port you choose (25 or 587) | Both opened by the script. |
 | **Inbound** browsers → portal | 80 / 443 | Opened by the script. |
-| **Outbound** Signer → Microsoft 365 | `<tenant>.mail.protection.outlook.com:25` | **Blocked on new Linode accounts** until support lifts it ([step 4](#4-ask-linode-to-lift-the-smtp-restriction)). |
+| **Outbound** Signer → Microsoft 365 | `<tenant>.mail.protection.outlook.com:25` | **Blocked on new Linode accounts** until support lifts it ([step 4](#4-make-sure-outbound-smtp-is-open)). Other providers vary. |
 | **Outbound** Signer → Google | `smtp-relay.gmail.com:587` | **Also blocked** on new accounts: Linode restricts 25, 465 and 587 together. |
 
 Until outbound SMTP is open, Signer cannot hand mail back. It then refuses each message with a temporary error (451), so it waits in Microsoft's or Google's queue and is retried, but it is delayed and eventually bounces if the block stays. **Do not route real mail through Signer until the script reports outbound SMTP as `open`.**
 
 ---
 
-### 1. Create the Linode
+### 1. Create the server
 
-Linode Cloud Manager → **Create Linode**:
+Any provider works if it allows outbound port 25. On Linode: Cloud Manager → **Create Linode**:
 
 | Setting | Value |
 | --- | --- |
 | Image | **Ubuntu 24.04 LTS** |
 | Region | Closest to the client's Microsoft 365 or Workspace data location |
-| Plan | **Linode 2 GB** (shared CPU). A 1 GB Nanode can work: the script adds swap so the build has room |
+| Plan | **Linode 2 GB** (1 shared CPU), or 2 GB / 1 CPU elsewhere. 1 GB can work: the script adds swap so the build has room |
 | Root password / SSH key | An SSH key is better |
-| Backups | Turn on if you want off-server copies (recommended) |
+| Backups | Turn on the provider's backups if you want off-server copies (recommended) |
 
 Note the **public IPv4 and IPv6** addresses once it boots.
 
@@ -128,21 +130,23 @@ Note the **public IPv4 and IPv6** addresses once it boots.
 At your DNS provider:
 
 ```
-signer.example.com.   A      <Linode IPv4>
-signer.example.com.   AAAA   <Linode IPv6>
+signer.example.com.   A      <server IPv4>
+signer.example.com.   AAAA   <server IPv6>
 ```
 
 Let `dig +short signer.example.com` return the address before you run the script, so it can get the certificate on the first run. If DNS isn't ready yet, the script skips the certificate and tells you to run it again later.
 
 ### 3. Reverse DNS
 
-Cloud Manager → the Linode → **Network** → each public IP → **Edit RDNS** → `signer.example.com`. Do this for the IPv4 and the IPv6 address. It needs the A/AAAA records from step 2 to exist first.
+Set the reverse DNS (PTR) of the server's IPv4 and IPv6 addresses to `signer.example.com`, in your provider's control panel. It needs the A/AAAA records from step 2 to exist first. On Linode: Cloud Manager → the Linode → **Network** → each public IP → **Edit RDNS**.
 
-Linode will not lift the SMTP restriction without matching forward and reverse DNS, and receiving mail servers trust a host more when its name and address agree.
+Receiving mail servers trust a host more when its name and address agree, and providers that open port 25 on request (Linode among them) usually want matching forward and reverse DNS first.
 
-### 4. Ask Linode to lift the SMTP restriction
+### 4. Make sure outbound SMTP is open
 
-Linode blocks **outbound** TCP 25, 465 and 587 on Linodes in newer accounts. Open a ticket in Cloud Manager → **Help & Support** → **Open new ticket**, and say:
+If your provider blocks **outbound** port 25 (and 587 for Google), ask them to lift it; if it cannot be lifted, use another provider. To check from the server: `nc -vz -w 10 <tenant>.mail.protection.outlook.com 25`.
+
+On Linode, outbound TCP 25, 465 and 587 are blocked on newer accounts. Open a ticket in Cloud Manager → **Help & Support** → **Open new ticket**, and say:
 
 - which Linode it is (label and IPv4)
 - that forward and reverse DNS are set to `signer.example.com`
@@ -226,7 +230,7 @@ Everything else is set for you: the provider's published IP ranges as the SMTP a
 
 It finishes with a summary: the portal URL, the public IPs (you need the IPv4 for the mail-flow connectors), whether outbound SMTP is open, and a numbered list of whatever is still left to do.
 
-To answer the questions up front, for example from a Linode StackScript, set `SIGNER_DOMAIN`, `SIGNER_ADMIN_EMAIL`, `SIGNER_PRIMARY_DOMAIN`, `SIGNER_PROVIDER` and `SIGNER_UPSTREAM_HOST` before running it.
+To answer the questions up front, for example from cloud-init or a Linode StackScript, set `SIGNER_DOMAIN`, `SIGNER_ADMIN_EMAIL`, `SIGNER_PRIMARY_DOMAIN`, `SIGNER_PROVIDER` and `SIGNER_UPSTREAM_HOST` before running it.
 
 ### 7. Finish the configuration
 
@@ -389,7 +393,7 @@ A message Signer *refuses* (its listed sender domain failed DMARC, so the sender
 
 **Certificates.** `certbot.timer` renews the Let's Encrypt certificate. The deploy hook `/etc/letsencrypt/renewal-hooks/deploy/signer` copies each new certificate to `/etc/signer/tls`, reloads Nginx and restarts Signer, so SMTP STARTTLS never serves an expired certificate. `certbot renew --dry-run` tests renewal.
 
-**Backups.** `signer-backup.timer` takes a consistent SQLite snapshot and archives the uploads every night into `/var/lib/signer/backups`, keeping 14 days. Run one now with `sudo -u signer /usr/local/sbin/signer-backup`. These copies are on the same disk, so also enable **Linode Backups**. To restore: `systemctl stop signer`, `gunzip` the chosen `signer-*.db.gz` over `/var/lib/signer/signer.db`, untar the matching `uploads-*.tgz` into `/var/lib/signer`, `chown -R signer:signer /var/lib/signer`, then `systemctl start signer`.
+**Backups.** `signer-backup.timer` takes a consistent SQLite snapshot and archives the uploads every night into `/var/lib/signer/backups`, keeping 14 days. Run one now with `sudo -u signer /usr/local/sbin/signer-backup`. These copies are on the same disk, so also enable your provider's backups (**Linode Backups** on Linode). To restore: `systemctl stop signer`, `gunzip` the chosen `signer-*.db.gz` over `/var/lib/signer/signer.db`, untar the matching `uploads-*.tgz` into `/var/lib/signer`, `chown -R signer:signer /var/lib/signer`, then `systemctl start signer`.
 
 **Health**
 
@@ -423,10 +427,10 @@ sudo -u signer sqlite3 /var/lib/signer/signer.db \
 - **`SMTP port 25 unavailable (EADDRINUSE)`** → another mail server holds the port. `ss -ltnp 'sport = :25'`, stop it, re-run the script.
 - **Microsoft 365 queues mail with a TLS error (`4.4.317`)** → STARTTLS is not offered or the certificate does not match `signer.example.com`. Check `TLS_CERT_PATH`, `SMTP_HOSTNAME`, and the `openssl s_client` output above.
 - **`550 5.7.64 TenantAttribution; Relay Access Denied`** → the return connector is not an `OnPremises` connector, is disabled, or does not list this server's IPv4. See [Connect Microsoft 365](#connect-microsoft-365).
-- **Activity shows Deferred with `timed out` / `ETIMEDOUT` on port 25** → Linode's outbound SMTP block is still in place ([step 4](#4-ask-linode-to-lift-the-smtp-restriction)). `nc -vz -w 10 <tenant>.mail.protection.outlook.com 25` from the server confirms it.
+- **Activity shows Deferred with `timed out` / `ETIMEDOUT` on port 25** → your provider's outbound SMTP block is still in place ([step 4](#4-make-sure-outbound-smtp-is-open)). `nc -vz -w 10 <tenant>.mail.protection.outlook.com 25` from the server confirms it.
 - **Mail is delayed or bounces after passing through Signer** → outbound SMTP is still blocked (re-run the script to check) or `UPSTREAM_*` is wrong. Signer defers mail it cannot hand back, so the provider's queue holds it until the block is lifted or the provider gives up.
 - **Relay fails with a certificate error** → upstream TLS is verified by default. Against a real `mail.protection.outlook.com` or `smtp-relay.gmail.com` host, this means the hostname is wrong. Only set `UPSTREAM_TLS_REJECT_UNAUTHORIZED=false` for a lab host with a self-signed certificate: it lets anyone on the network path read and alter the mail.
-- **Exchange or Gmail cannot connect at all** → the connecting host is outside `SMTP_ALLOWED_CIDRS`. `GET /api/settings` shows what the allowlist resolved to. If a Linode Cloud Firewall is attached, it must allow 25 and 587 as well.
+- **Exchange or Gmail cannot connect at all** → the connecting host is outside `SMTP_ALLOWED_CIDRS`. `GET /api/settings` shows what the allowlist resolved to. If a provider firewall is attached (a Linode Cloud Firewall, a security group), it must allow 25 and 587 as well.
 - **Activity shows Refused** → the From domain is listed but DMARC did not pass, so the sender got a bounce. The detail says which of SPF and DKIM failed; check the domain's SPF record includes Microsoft or Google and that DKIM signing is on. Refusals trigger an alert when **Settings → Alerts** is set up.
 - **OIDC redirect mismatch** → `PUBLIC_URL` and the Entra/Google redirect URI must match exactly (`https://host`, no trailing slash in `PUBLIC_URL`).
 - **Super admin cannot sign in** → the mailbox must match `SUPER_ADMIN_EMAIL` (case-insensitive).
@@ -437,7 +441,7 @@ sudo -u signer sqlite3 /var/lib/signer/signer.db \
 - **Empty signature fields** → run directory sync. Users only exist in the cache after an Entra/Google sync (or the demo seed).
 - **Logo upload rejected with 415** → only PNG, JPEG, GIF and WEBP are accepted, judged by file contents, not extension. SVG is refused deliberately: email clients do not render it (see [Portal hardening](#portal-hardening)).
 - **Sign-in returns 429** → the per-IP limit on sign-in routes. If everyone hits it together, the proxy's address is being counted instead of the client's: check that `TRUST_PROXY=loopback` and that Nginx still sets `X-Forwarded-For` (`/etc/nginx/sites-available/signer`, rewritten by each run of the script).
-- **A schedule fires at the wrong time** → set the timezone on the rule. Without one it follows the server's zone, which is UTC on a Linode (see [Schedules and timezones](#schedules-and-timezones)).
+- **A schedule fires at the wrong time** → set the timezone on the rule. Without one it follows the server's zone, which is UTC on a new Ubuntu server (see [Schedules and timezones](#schedules-and-timezones)).
 
 ### Docker alternative
 

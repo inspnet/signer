@@ -43,7 +43,7 @@ to fill in signatures. Both are deleted on a fixed schedule.
 | **Portal roles**: the email addresses of people granted admin, editor or designer access | Access control | Until an administrator removes them |
 | **Signature designs, rules, disclaimers, campaigns and uploaded artwork** | They are the product's configuration | Until an administrator deletes them |
 | **Server logs**: each request to the portal or to images served by Signer, with the client's IP address and browser details, and error messages, which can include email addresses | Security and troubleshooting | **14 days** (system journal) |
-| **Backups** of the database and uploaded artwork | Recovery after a failure | **14 days**, on the server. If Linode Backups is enabled, also on Linode's backup schedule |
+| **Backups** of the database and uploaded artwork | Recovery after a failure | **14 days**, on the server. If the hosting provider's backups are enabled (Linode Backups, for example), also on that provider's backup schedule |
 
 When a row is deleted, the database overwrites the data rather than leaving it
 recoverable in unused space in the file. Deleted data can still exist in a backup until that
@@ -58,8 +58,10 @@ stored on the server.
 ## Where the data is and who can see it
 
 - Everything above is stored on the one server that runs Signer, in the
-  Linode region chosen when it was set up. Linode (Akamai) is the hosting
-  provider.
+  hosting provider and region chosen when it was set up. We recommend Ubuntu
+  24.04 LTS with a provider that allows outbound port 25; we run ours on
+  Linode (Akamai). As with any server, the hosting provider has access to the
+  underlying disk.
 - Only people your administrators grant access to can sign in to the portal.
   Signing in goes through your own Microsoft or Google accounts.
 - **Signer sends no data to its authors or to any third-party service**, except
@@ -116,8 +118,8 @@ cannot be tied to a particular message or recipient.
   ```
 
   Copies in backups expire within 14 days.
-- **Taking Signer out of service:** delete the Linode, and its Linode Backups
-  if they were enabled. That removes all data Signer held.
+- **Taking Signer out of service:** delete the server, and the provider's
+  backups of it if they were enabled. That removes all data Signer held.
 
 ## Changing the defaults
 
