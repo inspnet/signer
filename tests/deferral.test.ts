@@ -37,7 +37,7 @@ process.env.UPSTREAM_HOST = "127.0.0.1";
 process.env.UPSTREAM_PORT = String(deadUpstreamPort);
 process.env.FAILURE_MODE = "fail-open";
 
-const { initDb, closeDb } = await import("../src/db/index.js");
+const { initDb, closeDb, mailStats } = await import("../src/db/index.js");
 const { startSmtp } = await import("../src/smtp/server.js");
 
 let servers: SMTPServer[] = [];
@@ -75,5 +75,16 @@ describe("when Signer cannot hand mail back", () => {
 
   it("defers already-processed mail too", async () => {
     await expect(send({ "X-Signer-MessageProcessed": "true" })).rejects.toMatchObject({ responseCode: 451 });
+  });
+
+  it("says in the Activity log why, and that the message was deferred rather than lost", async () => {
+    await expect(send()).rejects.toMatchObject({ responseCode: 451 });
+    const row = mailStats().recent[0]!;
+    expect(row.status).toBe("deferred");
+    expect(row.recipients).toEqual(["ada@contoso.com"]);
+    expect(row.detail).toMatch(/Signed, but handing it back failed: 127\.0\.0\.1:\d+ \(UPSTREAM_HOST\): .*ECONNREFUSED/);
+    expect(row.detail).toMatch(/refused the connection\. Check UPSTREAM_HOST and UPSTREAM_PORT/);
+    expect(row.detail).toMatch(/Sending it unsigned failed the same way\. Refused with 451/);
+    expect(mailStats().failed24h).toBeGreaterThanOrEqual(1);
   });
 });
