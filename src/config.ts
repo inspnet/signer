@@ -44,6 +44,8 @@ export const config = {
   superAdminEmail: env("SUPER_ADMIN_EMAIL").toLowerCase(),
   /** The organisation's main email domain. Only seeds the domain list; manage the rest in the portal. */
   primaryDomain: env("PRIMARY_DOMAIN").toLowerCase().replace(/^@/, ""),
+  /** Override for the public IPv4 shown in connector instructions; detected when empty. */
+  publicIPv4: env("PUBLIC_IPV4"),
   sessionSecret: env("SESSION_SECRET"),
   databasePath: path.resolve(env("DATABASE_PATH", path.join(dataDir, "signer.db"))),
   dataDir,

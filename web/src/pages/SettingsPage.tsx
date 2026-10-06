@@ -48,6 +48,7 @@ function MailFlow() {
   return (
     <div className="mt-6 space-y-6 max-w-4xl">
       <p className="text-stone-600 leading-7">{(data.notes as string[]).join(" ")}</p>
+      <PublicIpNote ip={data.publicIp as PublicIpInfo} />
       <section className="panel p-5">
         <h2 className="font-semibold text-lg">Microsoft 365 / Exchange Online</h2>
         <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-stone-700">
@@ -648,5 +649,28 @@ function ReturnHostEditor(props: { domain: string; value: string; onSaved: () =>
         </button>
       )}
     </form>
+  );
+}
+
+type PublicIpInfo = { address: string | null; source: "config" | "interface" | "dns" | "none"; dnsAddresses: string[]; warning?: string };
+
+function PublicIpNote({ ip }: { ip: PublicIpInfo }) {
+  const how = {
+    config: "set by PUBLIC_IPV4",
+    interface: "read from this server's network interface",
+    dns: "from this server's DNS record",
+    none: ""
+  }[ip.source];
+  return (
+    <div className="panel p-4 text-sm">
+      {ip.address ? (
+        <p>
+          This server sends mail from <code className="font-semibold">{ip.address}</code> ({how}). It is filled in below.
+        </p>
+      ) : (
+        <p>This server's public IPv4 could not be determined; replace the placeholder below.</p>
+      )}
+      {ip.warning && <p className="mt-2 text-amber-800">{ip.warning}</p>}
+    </div>
   );
 }
