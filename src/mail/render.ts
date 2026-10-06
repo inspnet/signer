@@ -148,7 +148,12 @@ export function renderDesign(input: Design, user: DirectoryUser, hideEmpty = tru
   const design = inPoints(input);
   const width = typeof design.width === "number" && Number.isFinite(design.width) ? design.width : 520;
   const inner = design.blocks.map((b) => renderBlock(b, user, hideEmpty)).filter(Boolean).join("");
-  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="${width}" style="width:${width}px;background:${cssValue(design.background, "#ffffff")};border-collapse:collapse;"><tr><td style="padding:0;">${inner}</td></tr></table>`;
+  // No background unless one was chosen on purpose. White was the default, and
+  // dark-mode mail clients (iOS Mail, Outlook) turn an explicit white into a
+  // grey box behind the signature instead of leaving it on the page colour.
+  const bg = cssValue(design.background, "");
+  const background = bg && !/^(#fff|#ffffff|white|transparent|none)$/i.test(bg) ? `background:${bg};` : "";
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="${width}" style="width:${width}px;${background}border-collapse:collapse;"><tr><td style="padding:0;">${inner}</td></tr></table>`;
 }
 
 export function renderPlainText(html: string): string {

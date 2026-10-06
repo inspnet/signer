@@ -252,6 +252,15 @@ describe("design renderer", () => {
     expect(renderDesign(text({ fontFamily: "Georgia, serif", fontSize: 12 }, "pt"), user)).toContain("font-family:Georgia, serif;");
   });
 
+  it("gives the signature no background unless a colour was chosen, so dark mode shows no box", () => {
+    const user = emptyUser("scott@inspired.co");
+    const design = (background?: string) => ({ width: 520, background, blocks: [{ id: "t", type: "text" as const, content: "Hi" }] });
+    for (const none of [undefined, "", "#ffffff", "#FFF", "white"]) {
+      expect(renderDesign(design(none), user)).not.toContain("background:");
+    }
+    expect(renderDesign(design("#f1f5fa"), user)).toContain("background:#f1f5fa;");
+  });
+
   it("turns a text block into a link, with directory fields in the address", () => {
     const user = emptyUser("scott@inspired.co");
     user.website = "www.inspired.co";

@@ -6,7 +6,6 @@ const muted = { fontFamily: APTOS_STACK, fontSize: 12, color: "#57534e" };
 export function defaultProfessionalDesign(): Design {
   return {
     width: 520,
-    background: "#ffffff",
     blocks: [
       {
         id: newBlockId(),
