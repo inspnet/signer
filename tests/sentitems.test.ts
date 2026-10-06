@@ -43,13 +43,17 @@ let uploadSessionStatus = 201;
 let attachments: Array<{ "@odata.type": string; id: string; name: string; contentType: string; size: number; isInline: boolean; data: Buffer }> = [];
 let uploaded = new Map<string, Buffer[]>();
 let deleted: string[] = [];
+/** Application permissions on the app token, as Entra puts them in its "roles" claim. */
+let roles = ["User.Read.All", "Group.Read.All", "GroupMember.Read.All", "Mail.ReadWrite"];
+const jwt = (claims: object) =>
+  ["{}", JSON.stringify(claims), "sig"].map((p) => Buffer.from(p).toString("base64url")).join(".");
 
 function stubGraph() {
   vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
-    if (url.includes("/oauth2/v2.0/token")) return json({ access_token: "token" });
+    if (url.includes("/oauth2/v2.0/token")) return json({ access_token: jwt({ roles }) });
     const headers = new Headers(init?.headers);
     const raw = init?.body;
     const call: Call = { method, url, headers };
@@ -138,6 +142,7 @@ beforeEach(() => {
   attachments = [];
   uploaded = new Map();
   deleted = [];
+  roles = ["User.Read.All", "Group.Read.All", "GroupMember.Read.All", "Mail.ReadWrite"];
   sent.resetSentItems();
   stubGraph();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -295,6 +300,7 @@ describe("Sent Items update", () => {
     const result = await sent.checkSentItems("it-admin@contoso.com");
     expect(result.steps.map((s) => `${s.ok ? "ok" : "FAIL"} ${s.step}`)).toEqual([
       "ok Sign in as the Entra app",
+      "ok Microsoft Graph permissions on the token",
       "ok Open it-admin@contoso.com's Sent Items",
       "ok Create a sent (not draft) message",
       "ok Attach a small file",
@@ -312,5 +318,20 @@ describe("Sent Items update", () => {
     expect(result.ok).toBe(false);
     expect(result.steps.find((s) => !s.ok)).toMatchObject({ step: "Attach a 3.5 MB file through an upload session" });
     expect(result.steps.at(-1)).toMatchObject({ step: "Delete the test message", ok: true });
+  });
+
+  it("spots Mail.ReadWrite granted for Exchange Online instead of Microsoft Graph", async () => {
+    vi.useRealTimers();
+    roles = ["User.Read.All", "Group.Read.All", "GroupMember.Read.All"];
+    vi.stubGlobal("fetch", async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/oauth2/v2.0/token")) return new Response(JSON.stringify({ access_token: jwt({ roles }) }));
+      return new Response(JSON.stringify({ error: { message: "Access is denied. Check credentials and try again." } }), { status: 403 });
+    });
+    const result = await sent.checkSentItems("it-admin@contoso.com");
+    expect(result.ok).toBe(false);
+    expect(result.steps[1]).toMatchObject({ step: "Microsoft Graph permissions on the token", ok: true, warn: true });
+    expect(result.steps[1]!.detail).toContain("it has: User.Read.All, Group.Read.All, GroupMember.Read.All");
+    expect(result.hint).toMatch(/must be under "Microsoft Graph".*not under "Office 365 Exchange Online"/);
   });
 });

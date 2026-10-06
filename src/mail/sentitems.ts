@@ -59,9 +59,21 @@ const MAX_QUEUED_BYTES = 50 * 1024 * 1024;
 export const SEARCH_DELAYS_MS = [20_000, 30_000, 60_000, 120_000, 240_000, 480_000];
 
 export const SENT_ITEMS_PERMISSION_HINT =
-  "Signer's Entra app needs the Microsoft Graph Application permission Mail.ReadWrite, with admin consent " +
-  "(Entra admin center → App registrations → the Signer app → API permissions). To limit it to the people " +
-  "in scope, use RBAC for Applications in Exchange Online instead (see Settings → Sent Items).";
+  "Signer's Entra app needs Mail.ReadWrite as a Microsoft Graph Application permission, with admin consent " +
+  "(Entra admin center → App registrations → the Signer app → API permissions → Add a permission → Microsoft Graph → " +
+  "Application permissions). The Mail.ReadWrite listed under \"Office 365 Exchange Online\" is a different permission " +
+  "that Graph ignores. To limit it to the people in scope, use RBAC for Applications in Exchange Online instead " +
+  "(see Settings → Sent Items).";
+
+/** The application permissions Microsoft put on an app token (its "roles" claim). */
+export function tokenRoles(token: string): string[] {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { roles?: unknown };
+    return Array.isArray(payload.roles) ? payload.roles.map(String) : [];
+  } catch {
+    return [];
+  }
+}
 
 export function sentItemsSettings(): SentItemsSettings {
   try {
@@ -400,7 +412,7 @@ async function attempt(key: string, job: Job): Promise<void> {
   }
 }
 
-export type CheckStep = { step: string; ok: boolean; detail: string };
+export type CheckStep = { step: string; ok: boolean; warn?: boolean; detail: string };
 
 /**
  * Settings → Sent Items → Run the check: the whole procedure on a throwaway
@@ -428,6 +440,25 @@ export async function checkSentItems(adminMailbox: string): Promise<{ ok: boolea
   let hint = "";
   try {
     token = await run("Sign in as the Entra app", () => entraToken(), () => "Got an app token");
+    // Graph lists the Application permissions it granted on the token itself.
+    // Missing is only fine when access was granted with RBAC for Applications,
+    // which does not show up there, so it is a warning, not a failure.
+    const roles = tokenRoles(token);
+    const graphGranted = roles.includes("Mail.ReadWrite");
+    steps.push({
+      step: "Microsoft Graph permissions on the token",
+      ok: true,
+      warn: !graphGranted,
+      detail: graphGranted
+        ? "Mail.ReadWrite is granted"
+        : `Mail.ReadWrite is not on the token (it has: ${roles.join(", ") || "none"}). That is only right if you granted it with RBAC for Applications.`
+    });
+    if (!graphGranted) {
+      hint =
+        "The token has no Microsoft Graph Mail.ReadWrite. In API permissions it must be under \"Microsoft Graph\" " +
+        "(Add a permission → Microsoft Graph → Application permissions → Mail → Mail.ReadWrite), not under " +
+        "\"Office 365 Exchange Online\", and admin consent must be granted. New permissions can take a few minutes to apply.";
+    }
     await run(
       `Open ${adminMailbox}'s Sent Items`,
       () => graph(token, "GET", `${mailbox(adminMailbox)}/mailFolders/SentItems?$select=id`),
@@ -481,10 +512,11 @@ export async function checkSentItems(adminMailbox: string): Promise<{ ok: boolea
       () => "Uploaded in chunks"
     );
   } catch (err) {
-    hint = err instanceof GraphError && (err.status === 401 || err.status === 403) ? SENT_ITEMS_PERMISSION_HINT : "";
+    if (!hint) hint = err instanceof GraphError && (err.status === 401 || err.status === 403) ? SENT_ITEMS_PERMISSION_HINT : "";
   }
   if (createdId) {
     await run("Delete the test message", () => permanentlyDelete(token, adminMailbox, createdId), () => "Deleted").catch(() => undefined);
   }
-  return { ok: steps.every((s) => s.ok), steps, hint };
+  const ok = steps.every((s) => s.ok);
+  return { ok, steps, hint: ok ? "" : hint };
 }

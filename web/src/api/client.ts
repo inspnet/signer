@@ -230,7 +230,7 @@ export const api = {
   saveSentItems: (body: { enabled: boolean; groupIds: string[] }) =>
     request<SentItemsConfig>("/api/sent-items", { method: "PUT", body: JSON.stringify(body) }),
   checkSentItems: () =>
-    request<{ ok: boolean; steps: Array<{ step: string; ok: boolean; detail: string }>; hint: string }>("/api/sent-items/check", {
+    request<{ ok: boolean; steps: Array<{ step: string; ok: boolean; warn?: boolean; detail: string }>; hint: string }>("/api/sent-items/check", {
       method: "POST",
       body: "{}"
     }),
