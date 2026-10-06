@@ -548,10 +548,30 @@ export function listUsers(): DirectoryUser[] {
 }
 
 export function upsertDirectoryUser(user: DirectoryUser, preserveOverrides = true): void {
-  const existing = getDb().prepare("SELECT overrides_json FROM users WHERE id = ?").get(user.id) as
-    | { overrides_json: string }
-    | undefined;
-  const overrides = preserveOverrides && existing ? existing.overrides_json : "{}";
+  const d = getDb();
+  d.transaction(() => {
+    const existing = d.prepare("SELECT overrides_json FROM users WHERE id = ?").get(user.id) as
+      | { overrides_json: string }
+      | undefined;
+    let overrides = preserveOverrides && existing ? existing.overrides_json : "{}";
+    // Another row can already hold this address under a different id: the
+    // super admin's placeholder created before the first sync, or an account
+    // deleted and re-created in the directory. Email is unique, so take that
+    // row over instead of failing the whole sync, and keep what the person
+    // saved under My details.
+    const sameEmail = d.prepare("SELECT id, overrides_json FROM users WHERE email = ? AND id != ?").get(user.email, user.id) as
+      | { id: string; overrides_json: string }
+      | undefined;
+    if (sameEmail) {
+      if (preserveOverrides && !existing) overrides = sameEmail.overrides_json;
+      d.prepare("DELETE FROM group_members WHERE user_id = ?").run(sameEmail.id);
+      d.prepare("DELETE FROM users WHERE id = ?").run(sameEmail.id);
+    }
+    writeDirectoryUser(user, overrides);
+  })();
+}
+
+function writeDirectoryUser(user: DirectoryUser, overrides: string): void {
   getDb()
     .prepare(
       `INSERT INTO users (
