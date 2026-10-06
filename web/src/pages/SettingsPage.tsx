@@ -1097,7 +1097,7 @@ function Alerts() {
       >
         <label className="flex gap-2 items-center font-medium">
           <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
-          Email an alert when messages are deferred or delivered unsigned
+          Email an alert when messages are not being delivered
         </label>
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_10rem]">
           <label className="block">
@@ -1144,7 +1144,7 @@ function Alerts() {
             />
           </label>
           <label className="block">
-            At most one every
+            Alert after
             <select
               className="input mt-1"
               value={form.intervalMinutes}
@@ -1177,10 +1177,10 @@ function Alerts() {
       <section className="panel p-5 text-sm leading-6 text-slate-700 space-y-3">
         <h2 className="font-semibold text-lg text-ink">How alerts work</h2>
         <p>
-          Signer emails these addresses when a message is <strong>Deferred</strong> (it could not be handed back, so Microsoft 365
-          or Google are holding it and retrying) or <strong>Unsigned</strong> (delivered without a signature). The first problem
-          is reported straight away; later ones are collected into one email per interval. One more email follows when mail is
-          flowing again.
+          Signer emails these addresses only after messages have failed to go out for the whole interval (15 minutes unless you
+          change it). A message that is signed, passed through, or delivered unsigned resets that wait, so a short burst does
+          not send mail. One email then describes the deferrals. Nothing further is sent for that outage, and one more email
+          follows when a message is handed back.
         </p>
         <p>
           Alerts go out through Mailgun&apos;s HTTPS API, not through Signer&apos;s own mail path, so they still arrive when port 25 is
