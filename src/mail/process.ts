@@ -223,18 +223,26 @@ function campaignHtml(camp: CampaignRecord): string {
   return href ? `<a href="${escapeHtmlAttr(href)}">${img}</a>` : img;
 }
 
+/** A blank line between the signature (and any campaign banner) and the disclaimers. */
+const DISCLAIMER_GAP = "<br>";
+
+/** Signature, then campaigns, then disclaimers, always with a line break before the disclaimers. */
+function joinSnippet(signature: string | undefined, campaigns: string[], disclaimers: string[]): string {
+  const above = [signature, ...campaigns].filter(Boolean).join("");
+  const below = disclaimers.filter(Boolean).join("");
+  return above && below ? `${above}${DISCLAIMER_GAP}${below}` : above + below;
+}
+
 function assembleSnippet(tested: TestResult, campaigns: CampaignRecord[]): string {
   const byId = new Map(campaigns.map((c) => [c.id, c]));
-  return [
+  return joinSnippet(
     tested.signature?.html,
-    ...tested.campaigns.map((c) => {
+    tested.campaigns.map((c) => {
       const record = byId.get(c.id);
       return record ? campaignHtml(record) : "";
     }),
-    ...tested.disclaimers.map((d) => d.html)
-  ]
-    .filter(Boolean)
-    .join("");
+    tested.disclaimers.map((d) => d.html)
+  );
 }
 
 export function evaluateMessage(ctx: RuleContext, bodyPreview: string): TestResult {
@@ -263,13 +271,11 @@ export function evaluateMessage(ctx: RuleContext, bodyPreview: string): TestResu
   const signature = sigEval.chosen
     ? { id: sigEval.chosen.id, name: sigEval.chosen.name, html: signatureHtml(sigEval.chosen, ctx.sender) }
     : null;
-  const snippet = [
+  const snippet = joinSnippet(
     signature?.html,
-    ...campEval.chosen.map((c) => campaignHtml(c)),
-    ...discEval.chosen.map((d) => d.html)
-  ]
-    .filter(Boolean)
-    .join("");
+    campEval.chosen.map((c) => campaignHtml(c)),
+    discEval.chosen.map((d) => d.html)
+  );
   return {
     signature,
     disclaimers: discEval.chosen.map((d) => ({ id: d.id, name: d.name, html: d.html })),
