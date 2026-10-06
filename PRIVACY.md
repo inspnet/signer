@@ -4,7 +4,7 @@ Signer adds email signatures and disclaimers to outgoing mail on a server that
 your organisation runs. This statement describes what Signer does with the
 mail and personal data that pass through it, and how long anything is kept.
 It covers the software as shipped, with the retention settings left at their
-defaults and deployed with the Linode + Forge recipe in this repository.
+defaults and installed with `deploy/install.sh` from this repository.
 
 **In short:** Signer does not keep your email. Messages are processed in
 memory and handed straight back to Microsoft 365 or Google Workspace. What
@@ -64,7 +64,8 @@ The server makes outbound connections only for these purposes:
 | Microsoft 365 / Exchange Online, or Google Workspace | Returning signed mail | The message, back to the provider it came from |
 | Microsoft Entra ID / Graph, or Google Workspace Admin APIs | Sign-in, and directory sync | Sign-in requests; directory reads (read-only) |
 | DNS | Looking up the mail server ranges Microsoft and Google publish | No personal data |
-| GitHub, npm, NodeSource | Installing and updating the software, during deploys only | No personal data |
+| Let's Encrypt | Issuing and renewing the HTTPS certificate | The server's hostname, and the super admin's email address as the account contact for expiry notices |
+| GitHub, npm, NodeSource, Ubuntu mirrors | Installing and updating the software, only when the install script runs (and Ubuntu's automatic security updates) | No personal data |
 
 Two outside services are contacted by browsers and mail clients, not by the
 server itself:
@@ -95,10 +96,10 @@ cannot be tied to a particular message or recipient.
   The next directory sync removes their details from Signer.
 - **A request to erase someone's data from the activity log** (as sender or
   recipient) before the 30 days are up: an administrator with server access
-  can run, as the site user:
+  can run:
 
   ```bash
-  sqlite3 /home/forge/signer-data/signer.db \
+  sudo -u signer sqlite3 /var/lib/signer/signer.db \
     "DELETE FROM mail_log WHERE lower(sender) = 'person@example.com' OR recipients LIKE '%\"person@example.com\"%';"
   ```
 

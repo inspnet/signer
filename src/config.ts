@@ -20,7 +20,7 @@ function envInt(name: string, fallback: number): number {
 
 /**
  * Which peers may set X-Forwarded-For. Only the reverse proxy in front of the
- * portal should be trusted: Nginx on the same machine under Forge (loopback),
+ * portal should be trusted: Nginx on the same machine (loopback),
  * or Caddy reaching a container through Docker's bridge (uniquelocal). Trusting
  * every peer would let a client pick its own address by sending the header
  * itself, which defeats the per-IP sign-in limit.

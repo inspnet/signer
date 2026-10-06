@@ -18,4 +18,6 @@ export function loadEnvFile(file = ".env"): void {
   }
 }
 
-loadEnvFile();
+// The installer keeps configuration in /etc/signer/signer.env, outside the
+// checkout, and points the service at it. Local development uses ./.env.
+loadEnvFile(process.env.SIGNER_ENV_FILE || ".env");
