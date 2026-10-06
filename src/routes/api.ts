@@ -31,6 +31,12 @@ import {
   setUserOverrides,
   UnsupportedUploadError,
   defaultRules,
+  addDomain,
+  DomainError,
+  listDomains,
+  removeDomain,
+  setPrimaryDomain,
+  getDb,
   type Role,
   type RuleSet,
   audit
@@ -39,6 +45,14 @@ import { DIRECTORY_FIELDS } from "../directory/fields.js";
 import { syncDirectory } from "../directory/sync.js";
 import { getRangeStatus } from "../smtp/ipranges.js";
 import { signatureHtml, testSignature } from "../mail/process.js";
+import {
+  checkForUpdates,
+  currentVersion,
+  requestUpdate,
+  UpdateUnavailableError,
+  updaterAvailable,
+  updateStatus
+} from "../system/update.js";
 import { defaultProfessionalDesign } from "../mail/templates.js";
 import type { Design } from "../mail/design.js";
 
@@ -346,6 +360,99 @@ export function registerApi(app: FastifyInstance): void {
     setAdminRole(body.email, body.role, user.email);
     audit(user.email, "set_role", body.email, body.role);
     return { ok: true };
+  });
+
+  // Domains this tenant sends from: who gets signed, and who counts as internal.
+  app.get("/api/domains", async (req, reply) => {
+    if (!requireRole(["admin"], req, reply)) return;
+    const domains = listDomains();
+    const listed = new Set(domains.map((d) => d.name));
+    // Offer the domains the directory actually uses, so the list is easy to complete.
+    const suggestions = (
+      getDb()
+        .prepare(
+          "SELECT domain, COUNT(*) AS people FROM users WHERE domain != '' AND enabled = 1 AND source IN ('entra', 'google') GROUP BY domain ORDER BY people DESC"
+        )
+        .all() as { domain: string; people: number }[]
+    ).filter((s) => !listed.has(s.domain));
+    return { domains, suggestions };
+  });
+
+  app.post("/api/domains", async (req, reply) => {
+    const user = requireRole(["admin"], req, reply);
+    if (!user) return;
+    const body = (req.body ?? {}) as { name?: string };
+    try {
+      const domain = addDomain(String(body.name ?? ""), user.email);
+      audit(user.email, "add_domain", domain.name);
+      return domain;
+    } catch (err) {
+      if (err instanceof DomainError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  app.delete("/api/domains/:name", async (req, reply) => {
+    const user = requireRole(["admin"], req, reply);
+    if (!user) return;
+    const { name } = req.params as { name: string };
+    try {
+      removeDomain(name);
+      audit(user.email, "remove_domain", name);
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof DomainError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  app.put("/api/domains/:name/primary", async (req, reply) => {
+    const user = requireRole(["admin"], req, reply);
+    if (!user) return;
+    const { name } = req.params as { name: string };
+    try {
+      setPrimaryDomain(name);
+      audit(user.email, "set_primary_domain", name);
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof DomainError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // Updates: check the git remote, and ask the root-owned updater to install.
+  app.get("/api/system/updates", async (req, reply) => {
+    if (!requireRole(["admin"], req, reply)) return;
+    const current = await currentVersion().catch(() => null);
+    return { available: updaterAvailable(), current, status: updateStatus() };
+  });
+
+  app.post("/api/system/updates/check", async (req, reply) => {
+    if (!requireRole(["admin"], req, reply)) return;
+    try {
+      return await checkForUpdates({ force: true });
+    } catch (err) {
+      return reply.code(502).send({ error: `Could not check for updates: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  });
+
+  app.get("/api/system/updates/status", async (req, reply) => {
+    if (!requireRole(["admin"], req, reply)) return;
+    return updateStatus();
+  });
+
+  // Installing restarts mail processing, so it takes an owner.
+  app.post("/api/system/updates/install", async (req, reply) => {
+    const user = requireRole(["owner"], req, reply);
+    if (!user) return;
+    try {
+      requestUpdate(user.email);
+      audit(user.email, "request_update");
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof UpdateUnavailableError) return reply.code(409).send({ error: err.message });
+      throw err;
+    }
   });
 
   app.get("/api/settings", async (req, reply) => {

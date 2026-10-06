@@ -2,6 +2,7 @@ import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
 import { convert } from "html-to-text";
 import { config } from "../config.js";
 import {
+  domainNames,
   getSignature,
   getUserByEmail,
   listCampaigns,
@@ -42,7 +43,7 @@ export type TestResult = {
   disclaimers: Array<{ id: string; name: string; html: string }>;
   campaigns: Array<{ id: string; name: string }>;
   details: Array<{
-    kind: "signature" | "disclaimer" | "campaign";
+    kind: "domain" | "signature" | "disclaimer" | "campaign";
     id: string;
     name: string;
     applied: boolean;
@@ -60,12 +61,26 @@ function addressesFrom(value?: AddressObject | AddressObject[]): string[] {
   return list.flatMap((item) => item.value.map((v) => (v.address || "").toLowerCase()).filter(Boolean));
 }
 
+/**
+ * The organisation's domains, managed under Settings → Domains. Recipients on
+ * them are internal. Deriving this from the directory instead counted Entra
+ * guest accounts, whose addresses are on partners' domains, as internal.
+ * Only an instance with no domains at all (no PRIMARY_DOMAIN and no
+ * SUPER_ADMIN_EMAIL to seed from) falls back to the directory.
+ */
 function internalDomains(): string[] {
-  const fromUsers = new Set(listUsers().map((u) => u.domain).filter(Boolean));
-  for (const d of (process.env.INTERNAL_DOMAINS || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
-    fromUsers.add(d);
-  }
-  return [...fromUsers];
+  const listed = domainNames();
+  if (listed.length) return listed;
+  return [...new Set(listUsers().map((u) => u.domain).filter(Boolean))];
+}
+
+/** Why a sender gets nothing added, or null when its domain is one of ours. */
+function senderOutOfScope(senderEmail: string): string | null {
+  const listed = domainNames();
+  if (!listed.length) return null;
+  const domain = senderEmail.split("@")[1]?.toLowerCase() ?? "";
+  if (listed.includes(domain)) return null;
+  return `Sender domain ${domain || "(none)"} is not one of this organisation's domains (Settings → Domains)`;
 }
 
 function senderUser(email: string): DirectoryUser {
@@ -218,6 +233,25 @@ function assembleSnippet(tested: TestResult, campaigns: CampaignRecord[]): strin
 }
 
 export function evaluateMessage(ctx: RuleContext, bodyPreview: string): TestResult {
+  const outOfScope = senderOutOfScope(ctx.senderEmail);
+  if (outOfScope) {
+    return {
+      signature: null,
+      disclaimers: [],
+      campaigns: [],
+      details: [
+        {
+          kind: "domain",
+          id: "sender-domain",
+          name: "Sender domain",
+          applied: false,
+          stopProcessing: true,
+          checks: [{ name: "Organisation domain", applicable: true, passed: false, detail: outOfScope }]
+        }
+      ],
+      htmlPreview: insertHtml(`<p>${escapeHtml(bodyPreview).replace(/\n/g, "<br/>")}</p>`, "")
+    };
+  }
   const sigEval = firstMatching(signaturesWithRules(), ctx, "signature");
   const discEval = matchingAll(listDisclaimers(), ctx, "disclaimer");
   const campEval = matchingAll(listCampaigns(), ctx, "campaign");
@@ -337,13 +371,14 @@ export async function processRawMessage(raw: Buffer, envelopeFrom: string, envel
   // Nothing to add: relay the original bytes rather than recomposing them.
   // Rebuilding a message we are not changing only risks losing structure.
   if (!snippetHtml) {
+    const outOfScope = tested.details.find((d) => d.kind === "domain");
     return {
       raw: withProcessedHeader(raw),
       signatureId: null,
       disclaimerIds: [],
       campaignIds: [],
       skipped: true,
-      reason: "No matching signature, campaign, or disclaimer"
+      reason: outOfScope ? outOfScope.checks[0]!.detail : "No matching signature, campaign, or disclaimer"
     };
   }
 

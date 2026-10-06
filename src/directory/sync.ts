@@ -6,8 +6,8 @@ type SyncResult = { users: number; groups: number; removed?: number; source: str
 
 async function entraToken(): Promise<string> {
   const body = new URLSearchParams({
-    client_id: config.entra.directoryClientId,
-    client_secret: config.entra.directoryClientSecret,
+    client_id: config.entra.clientId,
+    client_secret: config.entra.clientSecret,
     scope: "https://graph.microsoft.com/.default",
     grant_type: "client_credentials"
   });
@@ -21,9 +21,26 @@ async function entraToken(): Promise<string> {
   return json.access_token;
 }
 
+/**
+ * Directory sync signs in as the app (client credentials), so it needs
+ * Application permissions with admin consent. Delegated permissions of the
+ * same name do not apply, and that is the usual cause of this error.
+ */
+export const GRAPH_PERMISSION_HINT =
+  "The Entra app cannot read the directory. In Entra admin center → App registrations → the Signer app " +
+  "(ENTRA_CLIENT_ID) → API permissions, add Microsoft Graph Application permissions " +
+  "User.Read.All, Group.Read.All and GroupMember.Read.All, then click \"Grant admin consent\". " +
+  "Delegated permissions do not work for sync.";
+
 async function graphGet<T>(token: string, url: string): Promise<T> {
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) throw new Error(`Graph ${url} failed: ${await res.text()}`);
+  if (!res.ok) {
+    const body = await res.text();
+    if (res.status === 403 || /Authorization_RequestDenied/.test(body)) {
+      throw new Error(`${GRAPH_PERMISSION_HINT} (Graph said: ${body.slice(0, 300)})`);
+    }
+    throw new Error(`Graph ${url} failed: ${body}`);
+  }
   return (await res.json()) as T;
 }
 
@@ -31,7 +48,7 @@ export async function syncEntra(): Promise<SyncResult> {
   if (!entraConfigured()) return { users: 0, groups: 0, source: "entra", error: "Entra is not configured" };
   const token = await entraToken();
   const select =
-    "id,mail,userPrincipalName,displayName,givenName,surname,jobTitle,department,companyName,officeLocation,streetAddress,city,state,postalCode,country,businessPhones,mobilePhone,faxNumber,accountEnabled";
+    "id,mail,userPrincipalName,displayName,givenName,surname,jobTitle,department,companyName,officeLocation,streetAddress,city,state,postalCode,country,businessPhones,mobilePhone,faxNumber,accountEnabled,userType";
   type GraphUser = {
     id: string;
     mail?: string;
@@ -52,12 +69,17 @@ export async function syncEntra(): Promise<SyncResult> {
     mobilePhone?: string;
     faxNumber?: string;
     accountEnabled?: boolean;
+    userType?: string;
   };
   const users: DirectoryUser[] = [];
   let next: string | undefined = `https://graph.microsoft.com/v1.0/users?$select=${select}&$top=999`;
   while (next) {
     const page: { value: GraphUser[]; "@odata.nextLink"?: string } = await graphGet(token, next);
     for (const u of page.value) {
+      // Guests carry their home organisation's address. They are not staff, do
+      // not send through this tenant's connector, and must not make a partner
+      // look internal.
+      if (u.userType === "Guest") continue;
       const email = (u.mail || u.userPrincipalName || "").toLowerCase();
       if (!email || !email.includes("@")) continue;
       const row = emptyUser(email);

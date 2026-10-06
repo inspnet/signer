@@ -8,14 +8,14 @@
 #
 # The first run asks a few questions and sets everything up: packages,
 # Node.js, the Signer service, Nginx with a Let's Encrypt certificate, the
-# firewall, nightly backups and log retention. Run it again at any time to
-# update Signer to the latest code; later runs keep your configuration.
-#
-#   sudo bash /opt/signer/deploy/install.sh
+# firewall, nightly backups, log retention, and the updater the portal uses
+# (Mail flow → Updates). Run the same two commands again at any time to update
+# Signer and its server setup; later runs keep your configuration.
 #
 # Answers can also be supplied as environment variables for an unattended
-# first run: SIGNER_DOMAIN, SIGNER_ADMIN_EMAIL, SIGNER_PROVIDER (microsoft or
-# google), SIGNER_UPSTREAM_HOST. SIGNER_BRANCH picks a branch (default main).
+# first run: SIGNER_DOMAIN, SIGNER_ADMIN_EMAIL, SIGNER_PRIMARY_DOMAIN,
+# SIGNER_PROVIDER (microsoft or google), SIGNER_UPSTREAM_HOST. SIGNER_BRANCH
+# picks a branch (default main; an update stays on the branch already installed).
 #
 # Layout:
 #   /opt/signer               the code (a git checkout; local edits are discarded on update)
@@ -26,7 +26,7 @@
 set -euo pipefail
 
 REPO_URL="${SIGNER_REPO:-https://github.com/inspnet/signer.git}"
-BRANCH="${SIGNER_BRANCH:-main}"
+BRANCH="${SIGNER_BRANCH:-}"
 APP_DIR=/opt/signer
 DATA_DIR=/var/lib/signer
 CONF_DIR=/etc/signer
@@ -108,17 +108,22 @@ main() {
     *) warn "Tested on Ubuntu 22.04 and 24.04; this is ${PRETTY_NAME}. Continuing." ;;
   esac
 
+  # Never run alongside an update started from the portal.
+  exec 9> /run/signer-update.lock
+  flock -w 1800 9 || die "Another Signer update is still running."
+
   local first_run=1
   [ -f "$ENV_FILE" ] && first_run=0
 
   # ------------------------------------------------------------------------
-  local DOMAIN ADMIN_EMAIL PROVIDER UPSTREAM_HOST UPSTREAM_PORT
+  local DOMAIN ADMIN_EMAIL PRIMARY_DOMAIN PROVIDER UPSTREAM_HOST UPSTREAM_PORT
   local ENTRA_TENANT="" ENTRA_ID="" ENTRA_SECRET="" GOOGLE_ID="" GOOGLE_SECRET=""
   if [ "$first_run" -eq 1 ]; then
     say "Signer setup"
     note "A few questions. Press Enter to accept a [default]."
     DOMAIN="${SIGNER_DOMAIN:-}"
     ADMIN_EMAIL="${SIGNER_ADMIN_EMAIL:-}"
+    PRIMARY_DOMAIN="${SIGNER_PRIMARY_DOMAIN:-}"
     PROVIDER="${SIGNER_PROVIDER:-}"
     UPSTREAM_HOST="${SIGNER_UPSTREAM_HOST:-}"
     ask DOMAIN "Hostname for this server, e.g. signer.example.com"
@@ -127,6 +132,12 @@ main() {
     DOMAIN="${DOMAIN,,}"
     ask ADMIN_EMAIL "Super admin's email (signs in to the portal; also used for Let's Encrypt)"
     [[ "$ADMIN_EMAIL" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || die "'${ADMIN_EMAIL}' is not an email address."
+    note "The tenant's main email domain. Add its other domains later in the portal (Mail flow → Domains)."
+    ask PRIMARY_DOMAIN "Primary email domain" "${ADMIN_EMAIL##*@}"
+    PRIMARY_DOMAIN="${PRIMARY_DOMAIN,,}"
+    PRIMARY_DOMAIN="${PRIMARY_DOMAIN#@}"
+    [[ "$PRIMARY_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] ||
+      die "'${PRIMARY_DOMAIN}' is not a valid domain."
     ask PROVIDER "Mail provider: microsoft or google" "microsoft"
     PROVIDER="${PROVIDER,,}"
     case "$PROVIDER" in
@@ -140,14 +151,20 @@ main() {
       [[ "$UPSTREAM_HOST" == *.mail.protection.outlook.com ]] ||
         warn "${UPSTREAM_HOST} does not end in .mail.protection.outlook.com. Check it before routing mail."
       UPSTREAM_PORT=25
-      note "Portal sign-in uses an Entra app registration (README → Identity). Leave blank to add later."
+      entra_instructions "$DOMAIN"
+      note "Leave these blank to add them later in ${ENV_FILE}."
       ask ENTRA_TENANT "Entra tenant ID" "-"
       ask ENTRA_ID "Entra application (client) ID" "-"
       if [ "$ENTRA_ID" != "-" ]; then ask ENTRA_SECRET "Entra client secret (hidden)" "" secret; fi
     else
       ask UPSTREAM_HOST "Google SMTP relay host" "smtp-relay.gmail.com"
       UPSTREAM_PORT=587
-      note "Portal sign-in uses a Google OAuth client (README → Identity). Leave blank to add later."
+      note "Portal sign-in uses a Google OAuth client (README → Identity). In Google Cloud console →"
+      note "Credentials → OAuth client ID (Web application), set the authorized redirect URI to:"
+      note ""
+      note "    https://${DOMAIN}/api/auth/google/callback"
+      note ""
+      note "Leave these blank to add them later in ${ENV_FILE}."
       ask GOOGLE_ID "Google OAuth client ID" "-"
       if [ "$GOOGLE_ID" != "-" ]; then ask GOOGLE_SECRET "Google OAuth client secret (hidden)" "" secret; fi
     fi
@@ -198,17 +215,22 @@ main() {
   say "Service account and directories"
   id "$SVC_USER" > /dev/null 2>&1 ||
     useradd --system --home-dir "$DATA_DIR" --no-create-home --shell /usr/sbin/nologin "$SVC_USER"
-  install -d -o "$SVC_USER" -g "$SVC_USER" -m 750 "$DATA_DIR" "$DATA_DIR/backups"
+  install -d -o "$SVC_USER" -g "$SVC_USER" -m 750 "$DATA_DIR" "$DATA_DIR/backups" "$DATA_DIR/update"
   install -d -o "$SVC_USER" -g "$SVC_USER" -m 755 "$APP_DIR" "$NPM_CACHE"
   install -d -o root -g "$SVC_USER" -m 750 "$CONF_DIR" "$TLS_DIR"
   install -d -m 755 "$WEBROOT"
   note "Runs as '${SVC_USER}'. Code ${APP_DIR}, config ${CONF_DIR}, data ${DATA_DIR}."
 
   # ------------------------------------------------------------------------
+  # An update stays on the branch already installed, as the portal updater does.
+  if [ -z "$BRANCH" ] && [ -d "$APP_DIR/.git" ]; then
+    BRANCH="$(as_signer git -C "$APP_DIR" rev-parse --abbrev-ref HEAD)"
+  fi
+  BRANCH="${BRANCH:-main}"
   say "Signer code (${BRANCH})"
   if [ -d "$APP_DIR/.git" ]; then
     as_signer git -C "$APP_DIR" fetch --quiet origin "$BRANCH"
-    as_signer git -C "$APP_DIR" reset --quiet --hard "origin/${BRANCH}"
+    as_signer git -C "$APP_DIR" checkout --quiet --force -B "$BRANCH" "origin/${BRANCH}"
   else
     as_signer git clone --quiet --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
   fi
@@ -226,6 +248,7 @@ main() {
     install -o root -g "$SVC_USER" -m 640 "$APP_DIR/.env.example" "$ENV_FILE"
     env_set PUBLIC_URL "https://${DOMAIN}"
     env_set SUPER_ADMIN_EMAIL "$ADMIN_EMAIL"
+    env_set PRIMARY_DOMAIN "$PRIMARY_DOMAIN"
     env_set SESSION_SECRET "$(openssl rand -base64 48 | tr -d '\n')"
     env_set DATA_DIR "$DATA_DIR"
     env_set HTTP_HOST 127.0.0.1
@@ -308,8 +331,8 @@ Stop it (for Postfix: systemctl disable --now postfix) and re-run."
   say "Services"
   write_units
   systemctl daemon-reload
-  systemctl enable --quiet signer.service signer-backup.timer
-  systemctl restart signer-backup.timer
+  systemctl enable --quiet signer.service signer-backup.timer signer-update.path
+  systemctl restart signer-backup.timer signer-update.path
   systemctl restart systemd-journald
   systemctl enable --quiet --now certbot.timer 2> /dev/null || true
   systemctl restart signer
@@ -349,7 +372,8 @@ Stop it (for Postfix: systemctl disable --now postfix) and re-run."
     Public IPv6:   ${ipv6:-none}
     Config:        ${ENV_FILE}   (edit, then: systemctl restart signer)
     Logs:          journalctl -u signer -f
-    Update:        sudo bash ${APP_DIR}/deploy/install.sh
+    Update:        portal → Mail flow → Updates (code only), or run the
+                   two install commands again (code and server setup)
 
     Next steps (README → Deploy):
 EOF
@@ -364,10 +388,29 @@ EOF
   if [ -z "$(env_get ENTRA_CLIENT_ID)" ] && [ -z "$(env_get GOOGLE_CLIENT_ID)" ]; then
     echo "      ${step}. Add Entra or Google sign-in details to ${ENV_FILE} and restart Signer."; step=$((step + 1))
   fi
+  case "$(env_get SMTP_ALLOWED_CIDRS)" in
+    *google*) echo "      ${step}. Google OAuth client redirect URI: https://${DOMAIN}/api/auth/google/callback" ;;
+    *) echo "      ${step}. Entra app: redirect URI (Web) https://${DOMAIN}/api/auth/entra/callback; Application permissions"
+       echo "         User.Read.All, Group.Read.All, GroupMember.Read.All with admin consent (needed for directory sync)." ;;
+  esac
+  step=$((step + 1))
   echo "      ${step}. Sign in as $(env_get SUPER_ADMIN_EMAIL), sync the directory, build a signature."; step=$((step + 1))
   echo "      ${step}. Connect Microsoft 365 or Google Workspace (README), using IPv4 ${ipv4}."
   [ -f /var/run/reboot-required ] && warn "Updates installed that need a reboot. Run: reboot"
   return 0
+}
+
+# What the Entra app registration needs. One app does sign-in and directory sync.
+entra_instructions() {
+  note "Portal sign-in and directory sync use one Entra app registration. In Entra admin center →"
+  note "App registrations → New registration (single tenant), set:"
+  note ""
+  note "  Redirect URI (Web):          https://$1/api/auth/entra/callback"
+  note "  Delegated permissions:       openid, profile, email"
+  note "  Application permissions:     User.Read.All, Group.Read.All, GroupMember.Read.All"
+  note "  Then:                        Grant admin consent, and create a client secret"
+  note ""
+  note "Sync needs the Application permissions; Delegated ones with the same names do not work for it."
 }
 
 write_nginx() {
@@ -518,6 +561,145 @@ Persistent=true
 
 [Install]
 WantedBy=timers.target
+EOF
+
+  # The portal's updater. The service only drops a request file in its data
+  # directory; this root-owned script does the work (see its header).
+  {
+    echo "#!/usr/bin/env bash"
+    echo "# Installed by Signer's deploy/install.sh."
+    echo "APP_DIR=${APP_DIR}"
+    echo "DATA_DIR=${DATA_DIR}"
+    echo "SVC_USER=${SVC_USER}"
+    echo "NPM_CACHE=${NPM_CACHE}"
+    cat << 'UPDATER'
+# Started by signer-update.path when an owner presses "Install update" in the
+# portal (Mail flow → Updates). Runs as root but never executes anything from
+# the checkout as root: git and npm run as the service user. Installs the
+# latest commit of the branch already checked out, restarts Signer, and rolls
+# back if the new version fails to build or does not come up.
+set -uo pipefail
+
+dir="$DATA_DIR/update"
+log="$dir/last.log"
+statusfile="$dir/status.json"
+
+# Clear the request first, so a request made while another update holds the
+# lock cannot leave systemd re-triggering this service.
+rm -f "$dir/request"
+exec 9> /run/signer-update.lock
+flock -n 9 || exit 0
+
+started="$(date -u +%FT%TZ)"
+from=""
+to=""
+
+json() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
+
+status() { # state message [finished]
+  local tmp finished=""
+  [ -n "${3:-}" ] && finished="$(date -u +%FT%TZ)"
+  tmp="$(mktemp "$dir/.status.XXXXXX")"
+  printf '{"state":%s,"message":%s,"from":%s,"to":%s,"startedAt":%s,"finishedAt":%s}\n' \
+    "$(json "$1")" "$(json "$2")" "$(json "$from")" "$(json "$to")" "$(json "$started")" "$(json "$finished")" > "$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$statusfile"
+}
+
+as_signer() {
+  runuser -u "$SVC_USER" -- env HOME="$DATA_DIR" npm_config_cache="$NPM_CACHE" PATH=/usr/bin:/bin GIT_TERMINAL_PROMPT=0 "$@"
+}
+
+build() {
+  (cd "$APP_DIR" &&
+    as_signer npm ci --no-audit --no-fund --loglevel=error &&
+    as_signer npm ci --prefix web --no-audit --no-fund --loglevel=error &&
+    as_signer npm run build --silent)
+}
+
+healthy() {
+  local _
+  for _ in $(seq 1 45); do
+    curl -fs http://127.0.0.1:3000/api/health > /dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+
+: > "$log"
+chown root:"$SVC_USER" "$log"
+chmod 640 "$log"
+exec >> "$log" 2>&1
+echo "$(date -u +'%F %T') UTC  update requested from the portal"
+
+status running "Fetching the latest code…"
+branch="$(as_signer git -C "$APP_DIR" rev-parse --abbrev-ref HEAD)"
+from="$(as_signer git -C "$APP_DIR" rev-parse HEAD)"
+if ! as_signer git -C "$APP_DIR" fetch --quiet origin "$branch"; then
+  status failed "Could not fetch from the git remote. Nothing was changed." final
+  exit 1
+fi
+to="$(as_signer git -C "$APP_DIR" rev-parse "origin/$branch")"
+echo "Installed ${from:0:7}, latest ${to:0:7} on $branch"
+if [ "$from" = "$to" ]; then
+  status current "Already up to date." final
+  exit 0
+fi
+
+status running "Building ${to:0:7}… (a few minutes)"
+as_signer git -C "$APP_DIR" reset --quiet --hard "$to"
+if ! build; then
+  echo "Build failed; restoring ${from:0:7}"
+  as_signer git -C "$APP_DIR" reset --quiet --hard "$from"
+  build || echo "WARNING: rebuilding ${from:0:7} also failed"
+  # The running process still has the old version loaded, so no restart.
+  status failed "The new version failed to build. Signer was not restarted and is still running ${from:0:7}." final
+  exit 1
+fi
+
+status running "Restarting Signer on ${to:0:7}…"
+systemctl restart signer
+if healthy; then
+  note=""
+  if ! as_signer git -C "$APP_DIR" diff --quiet "$from" "$to" -- deploy/install.sh; then
+    note=" This update also changed the server setup (deploy/install.sh); re-run the installer on the server to apply it."
+  fi
+  echo "Signer is healthy on ${to:0:7}"
+  status succeeded "Updated from ${from:0:7} to ${to:0:7}.${note}" final
+  exit 0
+fi
+
+echo "Signer did not become healthy on ${to:0:7}; recent service log:"
+journalctl -u signer -n 30 --no-pager -o cat || true
+echo "Rolling back to ${from:0:7}"
+as_signer git -C "$APP_DIR" reset --quiet --hard "$from"
+build && systemctl restart signer && healthy || echo "WARNING: Signer is not healthy after rolling back"
+status rolled-back "The new version did not start, so Signer was rolled back to ${from:0:7}. See the log below." final
+exit 1
+UPDATER
+  } > /usr/local/sbin/signer-update
+  chmod 755 /usr/local/sbin/signer-update
+
+  cat > /etc/systemd/system/signer-update.service << EOF
+[Unit]
+Description=Update Signer (requested from the portal)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/signer-update
+TimeoutStartSec=30min
+EOF
+
+  cat > /etc/systemd/system/signer-update.path << EOF
+[Unit]
+Description=Watch for update requests from the Signer portal
+
+[Path]
+PathExists=${DATA_DIR}/update/request
+Unit=signer-update.service
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
   # Signer's request log (client IPs) lives in the journal; keep it no longer
