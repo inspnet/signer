@@ -8,7 +8,7 @@ import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import { config, validateConfig } from "./config.js";
-import { initDb } from "./db/index.js";
+import { initDb, purgeExpiredLogs } from "./db/index.js";
 import { authPlugin, registerAuthRoutes } from "./auth/index.js";
 import { registerApi } from "./routes/api.js";
 import { startSmtp } from "./smtp/server.js";
@@ -75,6 +75,19 @@ async function main(): Promise<void> {
 
   await app.listen({ port: config.httpPort, host: config.httpHost });
   await startSmtp();
+
+  const purge = () => {
+    try {
+      const removed = purgeExpiredLogs();
+      if (removed.mailLog || removed.auditLog) {
+        console.log(`[signer] Retention: removed ${removed.mailLog} activity and ${removed.auditLog} audit entries`);
+      }
+    } catch (err) {
+      console.error("[signer] Retention purge failed", err);
+    }
+  };
+  purge();
+  setInterval(purge, 60 * 60 * 1000).unref();
 
   if (config.directorySyncMinutes > 0) {
     const ms = config.directorySyncMinutes * 60 * 1000;

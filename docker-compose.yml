@@ -22,7 +22,7 @@ services:
     volumes:
       - signer-data:/data
     # Limit who may relay with SMTP_ALLOWED_CIDRS in .env and the host firewall.
-    # The production deployment is Linode + Forge without Docker: see README.
+    # The production deployment is deploy/install.sh on a Linode: see README.
 
 volumes:
   signer-data:

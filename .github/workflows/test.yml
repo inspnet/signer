@@ -21,5 +21,5 @@ jobs:
       - run: npx tsc -p web/tsconfig.json --noEmit
       # Catches Vite/bundler failures that typecheck alone does not.
       - run: npm run build
-      # The Forge recipe and deploy script run as root / on every deploy.
-      - run: shellcheck -S style deploy/forge/recipe.sh deploy/forge/deploy.sh
+      # The installer runs as root on the production server.
+      - run: shellcheck -S style deploy/install.sh

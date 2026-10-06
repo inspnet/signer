@@ -1,8 +1,8 @@
 import { config, entraConfigured } from "../config.js";
-import { getDb, replaceGroups, upsertDirectoryUser } from "../db/index.js";
+import { getDb, pruneDirectoryUsers, replaceGroups, upsertDirectoryUser } from "../db/index.js";
 import { emptyUser, type DirectoryUser } from "./fields.js";
 
-type SyncResult = { users: number; groups: number; source: string; error?: string };
+type SyncResult = { users: number; groups: number; removed?: number; source: string; error?: string };
 
 async function entraToken(): Promise<string> {
   const body = new URLSearchParams({
@@ -85,6 +85,8 @@ export async function syncEntra(): Promise<SyncResult> {
     }
     next = page["@odata.nextLink"];
   }
+  // Reached only when every page was read; a failed page throws above.
+  const removed = pruneDirectoryUsers("entra", users.map((u) => u.id));
 
   type GraphGroup = { id: string; displayName?: string; mail?: string };
   const groups: { id: string; name: string; email: string; source: string }[] = [];
@@ -109,7 +111,7 @@ export async function syncEntra(): Promise<SyncResult> {
     gnext = page["@odata.nextLink"];
   }
   replaceGroups(groups, memberships);
-  return { users: users.length, groups: groups.length, source: "entra" };
+  return { users: users.length, groups: groups.length, removed, source: "entra" };
 }
 
 async function googleAccessToken(): Promise<string> {
@@ -199,6 +201,8 @@ export async function syncGoogle(): Promise<SyncResult> {
     }
     pageToken = json.nextPageToken || "";
   } while (pageToken);
+  // Reached only when every page was read; a failed page throws above.
+  const removed = pruneDirectoryUsers("google", users.map((u) => u.id));
 
   type GGroup = { id: string; email?: string; name?: string };
   const groups: { id: string; name: string; email: string; source: string }[] = [];
@@ -227,7 +231,7 @@ export async function syncGoogle(): Promise<SyncResult> {
     pageToken = json.nextPageToken || "";
   } while (pageToken);
   replaceGroups(groups, memberships);
-  return { users: users.length, groups: groups.length, source: "google" };
+  return { users: users.length, groups: groups.length, removed, source: "google" };
 }
 
 export async function syncDirectory(): Promise<SyncResult[]> {

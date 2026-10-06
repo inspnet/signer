@@ -128,6 +128,9 @@ export function initDb(): Database.Database {
   db = new Database(config.databasePath);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
+  // Overwrite deleted rows instead of leaving them in free pages, so purged
+  // activity and removed directory entries are gone from the file too.
+  db.pragma("secure_delete = ON");
   migrate(db);
   if (config.demoMode) seedDemo(db);
   ensureSuperAdminDirectoryUser();
@@ -923,6 +926,56 @@ export function logMail(entry: {
       entry.detail ?? "",
       entry.processingMs
     );
+}
+
+/**
+ * Delete activity and audit entries older than their retention period. Runs
+ * at startup and hourly; a period of 0 keeps that log forever.
+ */
+export function purgeExpiredLogs(
+  now: Date = new Date(),
+  retention: { mailLogDays: number; auditLogDays: number } = config.retention
+): { mailLog: number; auditLog: number } {
+  const cutoff = (days: number) => new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+  const d = getDb();
+  const mailLog =
+    retention.mailLogDays > 0
+      ? d.prepare("DELETE FROM mail_log WHERE received_at < ?").run(cutoff(retention.mailLogDays)).changes
+      : 0;
+  const auditLog =
+    retention.auditLogDays > 0
+      ? d.prepare("DELETE FROM audit_log WHERE at < ?").run(cutoff(retention.auditLogDays)).changes
+      : 0;
+  return { mailLog, auditLog };
+}
+
+/**
+ * Remove people a completed sync no longer returned: they have been deleted
+ * from Entra or Google, and their contact details should not outlive that
+ * here. Suspended or disabled accounts are still returned and are kept
+ * (disabled), so a returning user keeps their saved overrides.
+ *
+ * An empty result is ignored rather than treated as "everyone left", since it
+ * far more often means the sync account lost permission to read the directory.
+ */
+export function pruneDirectoryUsers(source: string, seenIds: string[]): number {
+  if (!seenIds.length) return 0;
+  const d = getDb();
+  const seen = new Set(seenIds);
+  const stale = (d.prepare("SELECT id FROM users WHERE source = ?").all(source) as { id: string }[])
+    .map((r) => r.id)
+    .filter((id) => !seen.has(id));
+  if (!stale.length) return 0;
+  const tx = d.transaction(() => {
+    const members = d.prepare("DELETE FROM group_members WHERE user_id = ?");
+    const users = d.prepare("DELETE FROM users WHERE id = ?");
+    for (const id of stale) {
+      members.run(id);
+      users.run(id);
+    }
+  });
+  tx();
+  return stale.length;
 }
 
 export function mailStats(): {

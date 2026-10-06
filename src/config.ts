@@ -20,7 +20,7 @@ function envInt(name: string, fallback: number): number {
 
 /**
  * Which peers may set X-Forwarded-For. Only the reverse proxy in front of the
- * portal should be trusted: Nginx on the same machine under Forge (loopback),
+ * portal should be trusted: Nginx on the same machine (loopback),
  * or Caddy reaching a container through Docker's bridge (uniquelocal). Trusting
  * every peer would let a client pick its own address by sending the header
  * itself, which defeats the per-IP sign-in limit.
@@ -58,6 +58,12 @@ export const config = {
   processedHeader: env("PROCESSED_HEADER", "X-Signer-MessageProcessed"),
   failureMode: env("FAILURE_MODE", "fail-open") as "fail-open" | "fail-closed",
   directorySyncMinutes: envInt("DIRECTORY_SYNC_MINUTES", 240),
+  retention: {
+    /** Days to keep the per-message activity log (sender, recipients, outcome). 0 keeps it forever. */
+    mailLogDays: envInt("MAIL_LOG_RETENTION_DAYS", 30),
+    /** Days to keep the admin audit trail. 0 keeps it forever. */
+    auditLogDays: envInt("AUDIT_LOG_RETENTION_DAYS", 365)
+  },
   auth: {
     /** Sign-in attempts allowed per client IP per window. */
     rateLimitMax: envInt("AUTH_RATE_LIMIT_MAX", 20),
