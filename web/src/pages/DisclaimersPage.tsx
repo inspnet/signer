@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type Disclaimer, type RuleSet } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
+import { RichTextEditor } from "../components/RichTextEditor";
 import { describeRules, RULE_TABS, RuleEditor, type RuleTab } from "../components/RuleEditor";
 
 type Group = { id: string; name: string };
@@ -131,31 +132,24 @@ export function DisclaimerEditPage() {
       </div>
       <div className="mt-6 panel p-6 max-w-5xl space-y-4">
         {tab === "content" ? (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="space-y-3">
-              <label className="block text-sm">
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-end gap-4">
+              <label className="block text-sm flex-1 min-w-[16rem] max-w-xl">
                 Name
                 <input className="input mt-1" value={item.name} onChange={(e) => setItem({ ...item, name: e.target.value })} />
               </label>
-              <label className="flex gap-2 items-center text-sm">
+              <label className="flex gap-2 items-center text-sm h-9">
                 <input type="checkbox" checked={Boolean(item.enabled)} onChange={(e) => setItem({ ...item, enabled: e.target.checked ? 1 : 0 })} />
                 Enabled
               </label>
-              <label className="block text-sm">
-                HTML
-                <textarea
-                  className="input mt-1 h-56 font-mono text-xs"
-                  value={item.html}
-                  onChange={(e) => setItem({ ...item, html: e.target.value })}
-                />
-              </label>
             </div>
-            <div>
-              <div className="text-sm text-slate-500 mb-1">Preview</div>
-              <div className="rounded-lg border border-line bg-white p-4" dangerouslySetInnerHTML={{ __html: item.html }} />
-              <p className="mt-3 text-xs text-slate-500 leading-5">
-                Use the Senders tab to limit this to one domain (for example, a different legal entity per domain), a group
-                or particular people, and Recipients for external-only notices.
+            <div className="text-sm">
+              <div className="mb-1">Text</div>
+              <RichTextEditor value={item.html} onChange={(html) => setItem({ ...item, html })} />
+              <p className="mt-2 text-xs text-slate-500 leading-5">
+                What you see is what recipients get, below the signature. Use the Senders tab to limit this to one domain (for
+                example, a different legal entity per domain), a group or particular people, and Recipients for external-only
+                notices.
               </p>
             </div>
           </div>

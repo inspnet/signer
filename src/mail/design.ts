@@ -13,6 +13,9 @@ export type Block =
       type: "text";
       content: string;
       style?: TextStyle;
+      /** Makes the whole text a link: https://…, mailto:, tel: or a {{field}}. */
+      href?: string;
+      underline?: boolean;
     }
   | {
       id: string;

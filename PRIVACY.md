@@ -22,6 +22,14 @@ to fill in signatures. Both are deleted on a fixed schedule.
   If Signer cannot hand a message back, it refuses it with a temporary error
   (SMTP 451) and your provider retries later. Signer is never the only holder
   of a message, and a message cannot be lost inside it.
+- **Sent Items update** (off unless an administrator turns it on, Microsoft
+  365 only): after handing a signed message back, Signer keeps the signed
+  body and its signature images in memory, never its attachments, until it
+  has replaced the unsigned copy in the sender's Sent Items, at most about
+  15 minutes. To do that it reads and writes that mailbox's Sent Items
+  through Microsoft Graph. The attachments are copied from the original
+  item to the new one inside Microsoft 365, passing through Signer's memory
+  a few megabytes at a time. Nothing is written to disk.
 - The rule tester in the admin portal works on text typed into the page. It
   does not send that text anywhere and does not store it.
 
@@ -64,6 +72,7 @@ The server makes outbound connections only for these purposes:
 | --- | --- | --- |
 | Microsoft 365 / Exchange Online, or Google Workspace | Returning signed mail | The message, back to the provider it came from |
 | Microsoft Entra ID / Graph, or Google Workspace Admin APIs | Sign-in, and directory sync | Sign-in requests; directory reads (read-only) |
+| Microsoft Graph, only if an administrator turns on **Settings → Sent Items** | Replacing the unsigned copy in Sent Items with the signed one | Reads of the sender's Sent Items to find the message; the signed copy; its attachments, copied from the original |
 | DNS | Looking up the mail server ranges Microsoft and Google publish, and your own domains' MX records to return signed mail | No personal data |
 | Let's Encrypt | Issuing and renewing the HTTPS certificate | The server's hostname, and the super admin's email address as the account contact for expiry notices |
 | GitHub | Checking for and downloading updates, when an administrator uses **Settings → Updates** or the install script runs | No personal data: which version is installed, and requests for newer code |

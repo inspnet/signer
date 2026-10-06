@@ -101,7 +101,9 @@ describe("Microsoft 365 connector instructions", () => {
     closeDb();
   });
 
-  async function mailFlow(): Promise<{ microsoft: { powershell: string; sendConnector: { smartHost: string } } }> {
+  async function mailFlow(): Promise<{
+    microsoft: { powershell: string; sendConnector: { smartHost: string }; steps: Array<{ title: string; commands: string[] }> };
+  }> {
     const res = await app.inject({ method: "GET", url: "/api/mail-flow", headers: { cookie: cookieHeader } });
     expect(res.statusCode).toBe(200);
     return res.json();
@@ -154,6 +156,25 @@ describe("Microsoft 365 connector instructions", () => {
       expect(line).not.toContain("-Enabled");
     }
     expect(microsoft.powershell).toMatch(/Set-TransportRule .* -From \$null/);
+  });
+
+  it("splits the script into steps that each run on their own", async () => {
+    const { microsoft } = await mailFlow();
+    const commands = microsoft.steps.flatMap((step) => step.commands);
+    // Every command line in the full script appears in a step.
+    for (const line of microsoft.powershell.split("\n").filter((l) => l && !l.startsWith("#"))) {
+      expect(commands).toContain(line);
+    }
+    // A step that uses a variable sets it itself, so it can be pasted alone.
+    for (const step of microsoft.steps) {
+      const block = step.commands.join("\n");
+      for (const name of ["$smartHost", "$signerIp", "$header"]) {
+        if (block.replace(new RegExp(`^\\${name}\\s*=.*$`, "m"), "").includes(name)) {
+          expect(block, step.title).toMatch(new RegExp(`^\\${name}\\s*=`, "m"));
+        }
+      }
+    }
+    expect(microsoft.steps[0]!.commands.join("\n")).toContain("Connect-ExchangeOnline -UserPrincipalName");
   });
 
   it("validates Signer's certificate and does not advertise a port Exchange cannot use", async () => {

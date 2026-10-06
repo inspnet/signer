@@ -63,7 +63,7 @@ export type TextStyle = {
 };
 
 export type Block =
-  | { id: string; type: "text"; content: string; style?: TextStyle }
+  | { id: string; type: "text"; content: string; style?: TextStyle; href?: string; underline?: boolean }
   | { id: string; type: "field"; field: string; prefix?: string; suffix?: string; style?: TextStyle; link?: "email" | "phone" | "url" | "none" }
   | { id: string; type: "image"; src: string; width?: number; alt?: string; href?: string }
   | { id: string; type: "social"; networks: Array<{ name: "linkedin" | "x" | "facebook" | "instagram" | "website"; urlField?: string; url?: string }>; iconSize?: number }
@@ -121,6 +121,16 @@ export type AlertConfig = {
   apiKeySet: boolean;
   configured: boolean;
   last: { at: string; ok: boolean; kind: "problem" | "recovery" | "test"; detail: string } | null;
+};
+
+export type SentItemsConfig = {
+  enabled: boolean;
+  groupIds: string[];
+  available: boolean;
+  clientId: string;
+  pending: number;
+  results: Array<{ at: string; sender: string; result: "updated" | "not-found" | "skipped" | "failed"; detail: string }>;
+  groups: Array<{ id: string; name: string }>;
 };
 
 export type MailLogRow = {
@@ -207,6 +217,23 @@ export const api = {
   saveDisclaimer: (body: { id?: string; name: string; html: string; enabled: boolean; rules: RuleSet }) =>
     request<Disclaimer>("/api/disclaimers", { method: "POST", body: JSON.stringify(body) }),
   domainNames: () => request<string[]>("/api/domains/names"),
+  /** Multipart, so not through request(), which sends JSON. */
+  uploadImage: async (file: File): Promise<{ url: string }> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/uploads", { method: "POST", body: form, credentials: "include" });
+    const body = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+    if (!res.ok || !body.url) throw new Error(body.error || res.statusText);
+    return { url: body.url };
+  },
+  sentItems: () => request<SentItemsConfig>("/api/sent-items"),
+  saveSentItems: (body: { enabled: boolean; groupIds: string[] }) =>
+    request<SentItemsConfig>("/api/sent-items", { method: "PUT", body: JSON.stringify(body) }),
+  checkSentItems: () =>
+    request<{ ok: boolean; steps: Array<{ step: string; ok: boolean; detail: string }>; hint: string }>("/api/sent-items/check", {
+      method: "POST",
+      body: "{}"
+    }),
   alerts: () => request<AlertConfig>("/api/alerts"),
   saveAlerts: (body: {
     enabled: boolean;

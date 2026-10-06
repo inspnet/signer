@@ -9,6 +9,7 @@ import { getAllowedCidrs, initAllowedCidrs, startRangeRefresh } from "./ipranges
 import { relayTargetFor } from "./route.js";
 import { describeFailure, RelayError } from "./explain.js";
 import { noteMailOutcome } from "../alerts/index.js";
+import { messageIdOf, queueSentItemsUpdate } from "../mail/sentitems.js";
 
 export function ipAllowed(ip: string, cidrs: string[] = getAllowedCidrs()): boolean {
   if (!cidrs.length) return true;
@@ -76,7 +77,7 @@ function createServer(banner: string): SMTPServer {
     hideSTARTTLS: !tlsOptions().key,
     key: tlsOptions().key,
     cert: tlsOptions().cert,
-    size: 35 * 1024 * 1024,
+    size: config.smtp.maxMessageMb * 1024 * 1024,
     onConnect(session, callback) {
       if (!ipAllowed(session.remoteAddress)) {
         return callback(new Error("Relay access denied"));
@@ -91,9 +92,23 @@ function createServer(banner: string): SMTPServer {
     },
     onData(stream, session, callback) {
       const chunks: Buffer[] = [];
-      stream.on("data", (c) => chunks.push(c as Buffer));
+      let bytes = 0;
+      stream.on("data", (c: Buffer) => {
+        // Past the limit, stop keeping the data: the message is refused below.
+        if (stream.sizeExceeded) return;
+        chunks.push(c);
+        bytes += c.length;
+      });
       stream.on("end", () => {
-        void handleMessage(Buffer.concat(chunks), session)
+        if (stream.sizeExceeded) {
+          chunks.length = 0;
+          const tooBig = new Error(`Message exceeds the ${config.smtp.maxMessageMb} MB limit`) as Error & { responseCode: number };
+          tooBig.responseCode = 552;
+          return callback(tooBig);
+        }
+        const raw = Buffer.concat(chunks, bytes);
+        chunks.length = 0;
+        void handleMessage(raw, session)
           .then(() => callback())
           .catch((err: Error) => {
             // Reaching here means the message was not handed back: fail-open has
@@ -180,6 +195,8 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
     const stage = result.skipped ? "Handing it back failed" : "Signed, but handing it back failed";
     return deliverUnsigned(raw, envelopeFrom, envelopeTo, `${stage}: ${describeFailure(err)}`, err, entry);
   }
+  // Swap the unsigned copy in the sender's Sent Items for this one (when turned on).
+  if (!result.skipped && result.body) queueSentItemsUpdate(envelopeFrom, envelopeTo, messageIdOf(result.raw), result.body);
   record({
     ...entry(),
     signatureId: result.signatureId,

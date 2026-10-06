@@ -4,7 +4,8 @@ import { emptyUser, type DirectoryUser } from "./fields.js";
 
 type SyncResult = { users: number; groups: number; removed?: number; source: string; error?: string };
 
-async function entraToken(): Promise<string> {
+/** An app-only Microsoft Graph token for the Entra app (client credentials). */
+export async function entraToken(): Promise<string> {
   const body = new URLSearchParams({
     client_id: config.entra.clientId,
     client_secret: config.entra.clientSecret,

@@ -45,9 +45,18 @@ function styleAttr(style?: TextStyle): string {
   return parts.join(";");
 }
 
-function wrapLink(html: string, href: string | null): string {
+function wrapLink(html: string, href: string | null, underline = false): string {
   if (!href) return html;
-  return `<a href="${escapeHtml(href)}" style="color:inherit;text-decoration:none;">${html}</a>`;
+  return `<a href="${escapeHtml(href)}" style="color:inherit;text-decoration:${underline ? "underline" : "none"};">${html}</a>`;
+}
+
+/** A link a designer typed: web, mail and phone links only; a bare domain gets https://. */
+export function safeHref(raw: string): string | null {
+  const href = raw.trim();
+  if (!href) return null;
+  if (/^(https?:|mailto:|tel:)/i.test(href)) return href;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
+  return /^[\w-]+(\.[\w-]+)+/.test(href) ? `https://${href}` : null;
 }
 
 function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): string {
@@ -55,7 +64,8 @@ function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): str
     case "text": {
       const html = interpolate(block.content, user);
       if (hideEmpty && !html.replace(/<[^>]+>/g, "").trim()) return "";
-      return `<p style="${styleAttr(block.style)}">${html}</p>`;
+      const href = block.href ? safeHref(interpolate(block.href, user)) : null;
+      return `<p style="${styleAttr(block.style)}">${wrapLink(html, href, block.underline)}</p>`;
     }
     case "field": {
       const value = fieldValue(user, block.field);

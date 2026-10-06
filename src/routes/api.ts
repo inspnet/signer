@@ -54,6 +54,13 @@ import { perDomainMx, returnRouteFor } from "../smtp/route.js";
 import { detectPublicIPv4 } from "../system/publicip.js";
 import { diagnoseRelay } from "../smtp/diagnose.js";
 import { describeFailure } from "../smtp/explain.js";
+import {
+  checkSentItems,
+  pendingSentItems,
+  recentSentItemsResults,
+  saveSentItemsSettings,
+  sentItemsSettings
+} from "../mail/sentitems.js";
 import { alertSettings, alertsConfigured, lastAlert, saveAlertSettings, sendTestAlert } from "../alerts/index.js";
 import {
   checkForUpdates,
@@ -605,14 +612,33 @@ export function registerApi(app: FastifyInstance): void {
   });
 
   app.get("/api/mail-flow", async (req, reply) => {
-    if (!requireRole(["admin"], req, reply)) return;
+    const admin = requireRole(["admin"], req, reply);
+    if (!admin) return;
     const host = config.smtp.hostname;
     const header = config.processedHeader;
     const publicHost = new URL(config.publicUrl).host;
     const ip = await detectPublicIPv4();
     const signerIp = ip.address ?? "<this server's public IPv4>";
+    const rule = "Identify messages to send to Signer";
+    const ps = {
+      smartHost: `$smartHost = "${host}"`,
+      signerIp: `$signerIp  = "${signerIp}"`,
+      header: `$header    = "${header}"`,
+      outbound: `New-OutboundConnector -Name "Signer send" -ConnectorType OnPremises -UseMXRecord $false -SmartHosts $smartHost -TlsSettings DomainValidation -TlsDomain $smartHost -IsTransportRuleScoped $true -CloudServicesMailEnabled $true -Enabled $true`,
+      inbound: `New-InboundConnector -Name "Signer receive" -ConnectorType OnPremises -SenderDomains * -SenderIPAddresses $signerIp -RequireTls $true -CloudServicesMailEnabled $true -Enabled $true`,
+      rule: `New-TransportRule -Name "${rule}" -FromScope InOrganization -ExceptIfHeaderContainsMessageHeader $header -ExceptIfHeaderContainsWords "true" -RouteMessageOutboundConnector "Signer send" -Enabled $false`,
+      pilot: [`Set-TransportRule -Identity "${rule}" -From "pilot.user@yourdomain.com"`, `Enable-TransportRule -Identity "${rule}"`],
+      live: `Set-TransportRule -Identity "${rule}" -From $null`,
+      rollback: `Disable-TransportRule -Identity "${rule}" -Confirm:$false`
+    };
+    const isGoogle = /(^|\.)gmail\.com$|google/i.test(config.upstream.host);
     return {
       publicIp: ip,
+      provider: isGoogle ? "google" : "microsoft",
+      smtp: { host, port: 25 },
+      returnPath: perDomainMx()
+        ? "Each domain's own MX"
+        : config.upstream.host || "UPSTREAM_HOST is not set",
       microsoft: {
         sendConnector: {
           name: "Signer send",
@@ -642,27 +668,57 @@ export function registerApi(app: FastifyInstance): void {
           // Created disabled: pilot it on one mailbox before every sender goes through Signer.
           enabled: false
         },
+        // Each step's block runs on its own, so it sets the variables it uses.
+        steps: [
+          {
+            title: "Connect to Exchange Online",
+            detail: "In PowerShell 7, signed in as an Exchange administrator. Install the module once.",
+            commands: ["Install-Module ExchangeOnlineManagement -Scope CurrentUser", `Connect-ExchangeOnline -UserPrincipalName ${admin.email}`]
+          },
+          {
+            title: "Outbound connector: Microsoft 365 → Signer",
+            detail: `Delivers to ${host} on port 25 and checks its certificate. Only used when the transport rule sends mail to it.`,
+            commands: [ps.smartHost, ps.outbound]
+          },
+          {
+            title: "Inbound connector: Signer → Microsoft 365",
+            detail: `Recognises this server by ${signerIp}, so Exchange relays signed mail on to outside recipients. If PowerShell warns that it was created disabled, Microsoft support has to enable it.`,
+            commands: [ps.signerIp, ps.inbound]
+          },
+          {
+            title: "Transport rule, created off",
+            detail: "Sends mail from people in your organisation to Signer, unless it has already been signed. Nothing changes until you turn it on.",
+            commands: [ps.header, ps.rule]
+          },
+          {
+            title: "Pilot on one mailbox",
+            detail: "Run the return-path test first. Then turn the rule on for one person and check that their mail arrives signed.",
+            commands: ps.pilot
+          },
+          { title: "Go live", detail: "Remove the pilot condition so every sender goes through Signer.", commands: [ps.live] },
+          { title: "Roll back, if you need to", detail: "Mail stops going through Signer straight away.", commands: [ps.rollback] }
+        ],
+        // The whole script in one block, for copying in one go.
         powershell: [
-          `$smartHost = "${host}"`,
-          `$signerIp  = "${signerIp}"`,
-          `$header    = "${header}"`,
+          ps.smartHost,
+          ps.signerIp,
+          ps.header,
           ``,
-          `New-OutboundConnector -Name "Signer send" -ConnectorType OnPremises -UseMXRecord $false -SmartHosts $smartHost -TlsSettings DomainValidation -TlsDomain $smartHost -IsTransportRuleScoped $true -CloudServicesMailEnabled $true -Enabled $true`,
+          ps.outbound,
           ``,
-          `New-InboundConnector -Name "Signer receive" -ConnectorType OnPremises -SenderDomains * -SenderIPAddresses $signerIp -RequireTls $true -CloudServicesMailEnabled $true -Enabled $true`,
+          ps.inbound,
           ``,
           `# Created disabled, so no mail goes through Signer yet.`,
-          `New-TransportRule -Name "Identify messages to send to Signer" -FromScope InOrganization -ExceptIfHeaderContainsMessageHeader $header -ExceptIfHeaderContainsWords "true" -RouteMessageOutboundConnector "Signer send" -Enabled $false`,
+          ps.rule,
           ``,
           `# Pilot: turn it on for one mailbox only.`,
-          `Set-TransportRule -Identity "Identify messages to send to Signer" -From "pilot.user@yourdomain.com"`,
-          `Enable-TransportRule -Identity "Identify messages to send to Signer"`,
+          ...ps.pilot,
           ``,
           `# Go live: remove the pilot condition so it applies to every sender.`,
-          `Set-TransportRule -Identity "Identify messages to send to Signer" -From $null`,
+          ps.live,
           ``,
           `# Roll back at any time: mail stops going through Signer straight away.`,
-          `Disable-TransportRule -Identity "Identify messages to send to Signer" -Confirm:$false`
+          ps.rollback
         ].join("\n")
       },
       google: {
@@ -794,6 +850,48 @@ export function registerApi(app: FastifyInstance): void {
       const result = await sendTestAlert();
       audit(admin.email, "test_alert", "", result.ok ? "sent" : "failed");
       if (!result.ok) return reply.code(502).send({ error: result.detail });
+      return result;
+    }
+  );
+
+  // Swapping the unsigned copy in Sent Items for the signed one (Microsoft 365).
+  const sentItemsView = () => ({
+    ...sentItemsSettings(),
+    available: entraConfigured(),
+    clientId: config.entra.clientId,
+    pending: pendingSentItems(),
+    results: recentSentItemsResults(),
+    groups: listGroups().map((g) => ({ id: g.id, name: g.name }))
+  });
+
+  app.get("/api/sent-items", async (req, reply) => {
+    if (!requireRole(["admin"], req, reply)) return;
+    return sentItemsView();
+  });
+
+  app.put("/api/sent-items", async (req, reply) => {
+    const admin = requireRole(["admin"], req, reply);
+    if (!admin) return;
+    const body = (req.body ?? {}) as { enabled?: boolean; groupIds?: unknown };
+    const known = new Set(listGroups().map((g) => g.id));
+    const groupIds = Array.isArray(body.groupIds) ? body.groupIds.map(String).filter((g) => known.has(g)) : sentItemsSettings().groupIds;
+    const enabled = body.enabled ?? sentItemsSettings().enabled;
+    if (enabled && !entraConfigured()) {
+      return reply.code(400).send({ error: "Sent Items update needs Microsoft 365 sign-in (ENTRA_*) configured on this server." });
+    }
+    saveSentItemsSettings({ enabled, groupIds });
+    audit(admin.email, "update_sent_items", "", `${enabled ? "on" : "off"}; ${groupIds.length ? `${groupIds.length} groups` : "everyone"}`);
+    return sentItemsView();
+  });
+
+  app.post(
+    "/api/sent-items/check",
+    { config: { rateLimit: { max: 10, timeWindow: 10 * 60 * 1000 } } },
+    async (req, reply) => {
+      const admin = requireRole(["admin"], req, reply);
+      if (!admin) return;
+      const result = await checkSentItems(admin.email);
+      audit(admin.email, "check_sent_items", "", result.ok ? "passed" : "failed");
       return result;
     }
   );

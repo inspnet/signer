@@ -17,6 +17,9 @@ import {
 import { emptyUser, type DirectoryUser } from "../directory/fields.js";
 import type { Design } from "./design.js";
 import { insertHtml, insertText, isReplyMessage, latestBodyText } from "./insert.js";
+import { decodeText, findBody, headerBlock, parsePart, spliceBody, type InlineImage } from "./mime.js";
+import { embedImages } from "./embed.js";
+import type { SignedCopy } from "./sentitems.js";
 import { renderDesign, renderPlainText } from "./render.js";
 import { evaluateRules, type RuleContext } from "./rules.js";
 import { defaultProfessionalDesign } from "./templates.js";
@@ -28,6 +31,8 @@ export type ProcessResult = {
   campaignIds: string[];
   skipped: boolean;
   reason: string;
+  /** The new body, when the message was signed: what the Sent Items copy should show. */
+  body?: SignedCopy;
 };
 
 export type TestInput = {
@@ -291,16 +296,24 @@ export async function composeTestMessage(input: {
     ? `with the signature "${escapeHtml(result.signature.name)}"`
     : "with no signature, because no signature rule matched";
   const notice =
-    `<p style="font:12px Arial,sans-serif;color:#57534e;background:#f4f1ea;padding:8px 10px;border-radius:6px;margin:0 0 16px">` +
+    `<p style="font:12px Arial,sans-serif;color:#475569;background:#f1f5fa;padding:8px 10px;border-radius:6px;margin:0 0 16px">` +
     `Signer test: this is the message ${escapeHtml(input.testedTo)} would receive from ${escapeHtml(input.from)}, ${applied}.</p>`;
-  const html = notice + result.htmlPreview;
+  const embedded = embedImages(notice + result.htmlPreview);
+  const html = embedded.html;
   const { default: MailComposer } = await import("nodemailer/lib/mail-composer/index.js");
   const composer = new MailComposer({
     from: input.from,
     to: input.deliverTo,
     subject: `[Signer test] ${(input.subject || "Test").slice(0, 200)}`,
     html,
-    text: convert(html),
+    text: convert(notice + result.htmlPreview, { selectors: [{ selector: "img", format: "skip" }] }),
+    attachments: embedded.inline.map((img) => ({
+      filename: img.filename,
+      content: img.content,
+      contentType: img.contentType,
+      cid: img.cid,
+      contentDisposition: "inline" as const
+    })),
     headers: [
       { key: config.processedHeader, value: "true" },
       { key: "X-Signer-Test", value: "true" }
@@ -367,6 +380,9 @@ function unsafeToRewrite(raw: Buffer): string | null {
  * byte for byte, so the connector does not send it back to us. Prepending keeps
  * the rest of the message — and therefore any DKIM signature over it — intact.
  */
+/** Above this, a message whose structure the body scan does not recognise is not parsed whole. */
+const FULL_PARSE_MAX_BYTES = 25 * 1024 * 1024;
+
 export function withProcessedHeader(raw: Buffer): Buffer {
   const headerLine = Buffer.from(`${config.processedHeader}: true\r\n`, "utf8");
   return Buffer.concat([headerLine, raw]);
@@ -384,11 +400,35 @@ export async function processRawMessage(raw: Buffer, envelopeFrom: string, envel
       reason: `Passed through untouched: ${unsafe} cannot be rebuilt without losing content`
     };
   }
-  const parsed = await simpleParser(raw);
+  // Find the body without decoding attachments, so a 100 MB message costs
+  // little more than its own size in memory (see mime.ts). Only a structure
+  // the scan does not recognise falls back to parsing the whole message, and
+  // only for messages small enough to do that safely.
+  const root = parsePart(raw, 0, raw.length);
+  const bodyParts = findBody(root);
+  const splice = Boolean(bodyParts.html || bodyParts.text);
+  if (!splice && raw.length > FULL_PARSE_MAX_BYTES) {
+    return {
+      raw: withProcessedHeader(raw),
+      signatureId: null,
+      disclaimerIds: [],
+      campaignIds: [],
+      skipped: true,
+      reason: "Passed through untouched: no message body was found to sign"
+    };
+  }
+  const parsed = await simpleParser(splice ? headerBlock(raw) : raw);
   const from = (addressesFrom(parsed.from)[0] || envelopeFrom || "").toLowerCase();
   const to = [...new Set([...envelopeTo.map((e) => e.toLowerCase()), ...addressesFrom(parsed.to)])];
-  const html = typeof parsed.html === "string" ? parsed.html : "";
-  const text = parsed.text || (html ? convert(html) : "");
+  const html = splice
+    ? bodyParts.html
+      ? decodeText(raw, bodyParts.html)
+      : ""
+    : typeof parsed.html === "string"
+      ? parsed.html
+      : "";
+  const plain = splice ? (bodyParts.text ? decodeText(raw, bodyParts.text) : "") : parsed.text || "";
+  const text = plain || (html ? convert(html) : "");
   const ctx = buildContext({
     from,
     to,
@@ -420,11 +460,16 @@ export async function processRawMessage(raw: Buffer, envelopeFrom: string, envel
     };
   }
 
-  const nextHtml = insertHtml(html || `<div>${escapeHtml(text)}</div>`, snippetHtml);
+  // Uploaded logos and banners travel inside the message (cid:), not as links.
+  const embedded = embedImages(snippetHtml);
+  const nextHtml = insertHtml(html || `<div>${escapeHtml(text)}</div>`, embedded.html);
   const nextText = insertText(text, renderPlainText(snippetHtml));
-  const composed = await composeRfc822(parsed, nextHtml, nextText);
+  const composed = splice
+    ? withProcessedHeader(spliceBody(raw, root, bodyParts, nextHtml, nextText, embedded.inline))
+    : await composeRfc822(parsed, nextHtml, nextText, embedded.inline);
   return {
     raw: composed,
+    body: { html: nextHtml, text: nextText, inline: embedded.inline },
     signatureId: tested.signature?.id ?? null,
     disclaimerIds: tested.disclaimers.map((d) => d.id),
     campaignIds: tested.campaigns.map((c) => c.id),
@@ -491,7 +536,7 @@ function carriedHeaders(parsed: ParsedMail): Array<{ key: string; value: string 
   return carried;
 }
 
-async function composeRfc822(parsed: ParsedMail, html: string, text: string): Promise<Buffer> {
+async function composeRfc822(parsed: ParsedMail, html: string, text: string, images: InlineImage[] = []): Promise<Buffer> {
   const { default: MailComposer } = await import("nodemailer/lib/mail-composer/index.js");
   const extraHeaders = carriedHeaders(parsed);
   extraHeaders.push({ key: config.processedHeader, value: "true" });
@@ -504,13 +549,22 @@ async function composeRfc822(parsed: ParsedMail, html: string, text: string): Pr
     subject: parsed.subject,
     text,
     html: html || undefined,
-    attachments: (parsed.attachments || []).map((a) => ({
-      filename: a.filename,
-      content: a.content,
-      contentType: a.contentType,
-      cid: a.cid,
-      contentDisposition: a.contentDisposition === "inline" ? "inline" : "attachment"
-    })),
+    attachments: [
+      ...(parsed.attachments || []).map((a) => ({
+        filename: a.filename,
+        content: a.content,
+        contentType: a.contentType,
+        cid: a.cid,
+        contentDisposition: (a.contentDisposition === "inline" ? "inline" : "attachment") as "inline" | "attachment"
+      })),
+      ...images.map((img) => ({
+        filename: img.filename,
+        content: img.content,
+        contentType: img.contentType,
+        cid: img.cid,
+        contentDisposition: "inline" as const
+      }))
+    ],
     headers: extraHeaders,
     inReplyTo: parsed.inReplyTo,
     references: parsed.references,

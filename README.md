@@ -58,6 +58,10 @@ Detection is client-markup, not a mailbox API. Each client wraps the previous me
 
 New messages (no quote markup) still get the signature at the end of the body. Bottom-posted mail — quoted history first, new text after it — is detected by a quote block at the start with real reply text after it, and the signature is placed after that reply.
 
+**Only the body text is rewritten.** Signer finds the message's HTML and plain-text parts by scanning its MIME boundaries, adds the signature to them and splices them back. Attachments and everything else pass through byte for byte, so a 100 MB message needs about twice its size in memory, not several decoded copies. Messages up to `SMTP_MAX_MESSAGE_MB` (150 MB, Exchange Online's maximum) are accepted.
+
+**Uploaded images are embedded.** A logo or banner uploaded in the designer travels inside each message as an inline image (`cid:`), so recipients see it without "download pictures" prompts and nothing is fetched from Signer when a message is opened. Images given as links (`https://…`, or a directory photo URL) stay links.
+
 ---
 
 ## Deploy
@@ -367,6 +371,10 @@ How the portal updater stays safe:
 
 **Configuration changes.** Edit `/etc/signer/signer.env`, then `systemctl restart signer`.
 
+**Sent Items update (Microsoft 365).** Outlook saves the unsigned message to Sent Items before Signer signs it. **Settings → Sent Items** replaces that copy with the signed one, for the groups you choose or everyone. A few seconds after Signer hands a message back, it finds the original by its Message-ID, creates the signed copy in Sent Items with the same recipients, sent time and conversation (thread), copies the attachments across inside Microsoft 365 (upload sessions for files over 3 MB, up to Graph's 150 MB per file), and permanently deletes the original. If any step fails, the signed copy is removed and the original stays. Messages with an attached email or a cloud file are left as sent, as are messages Outlook never saved (sent by apps, or from shared mailboxes it cannot find).
+
+It needs the Microsoft Graph **Mail.ReadWrite** Application permission on the same Entra app: either granted in Entra (every mailbox), or, to limit it to a group, granted in Exchange Online with RBAC for Applications (the tab gives the three PowerShell commands). **Run the check** on the tab performs the whole swap, including a 3.5 MB attachment, on a throwaway message in your own Sent Items and deletes it, so you know your tenant allows every step before anyone's mail depends on it. Pilot it on one group first.
+
 **Alerts.** **Settings → Alerts** emails administrators when messages are *Deferred* (Signer could not hand them back, so Microsoft 365 / Google hold them and retry) or *Unsigned* (delivered without a signature). Alerts go through [Mailgun](https://www.mailgun.com)'s HTTPS API rather than Signer's own SMTP path, so they still arrive when port 25 is blocked or Exchange refuses Signer. To set it up:
 
 1. In Mailgun, add a sending domain (a subdomain such as `mg.yourdomain.com`), add its DNS records and wait until it is verified.
@@ -493,6 +501,7 @@ See `.env.example` for the full list with comments. The keys that matter most:
 | `PRIMARY_DOMAIN` | super admin's domain | Seeds the [domain list](#domains) on first start; manage domains in the portal after that |
 | `SESSION_SECRET` | — | **Required.** The server exits without it unless `DEMO_MODE=true` |
 | `SMTP_ALLOWED_CIDRS` | empty | CIDRs, or `microsoft` / `google`. Empty accepts mail from anyone |
+| `SMTP_MAX_MESSAGE_MB` | `150` | Largest message accepted. Exchange Online allows up to 150 MB, about 100 MB of attachments. Signing rewrites only the body text, so a message needs roughly twice its size in memory |
 | `SMTP_RANGE_REFRESH_MINUTES` | `720` | How often provider ranges are re-resolved; `0` disables |
 | `PUBLIC_IPV4` | detected | The IPv4 shown in the connector instructions. Read from the network interface; set it only behind NAT or with several public addresses |
 | `SMTP_HOSTNAME` | `signer.local` | Name in the SMTP banner; must match the TLS certificate |
