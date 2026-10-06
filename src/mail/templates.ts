@@ -1,7 +1,7 @@
-import { newBlockId, type Design } from "./design.js";
+import { APTOS_STACK, newBlockId, type Design } from "./design.js";
 
-const body = { fontFamily: "Calibri, Arial, sans-serif", fontSize: 13, color: "#1c1917" };
-const muted = { fontFamily: "Calibri, Arial, sans-serif", fontSize: 12, color: "#57534e" };
+const body = { fontFamily: APTOS_STACK, fontSize: 13, color: "#1c1917" };
+const muted = { fontFamily: APTOS_STACK, fontSize: 12, color: "#57534e" };
 
 export function defaultProfessionalDesign(): Design {
   return {

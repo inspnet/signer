@@ -19,6 +19,7 @@ import type { Design } from "./design.js";
 import { insertHtml, insertText, isReplyMessage, latestBodyText } from "./insert.js";
 import { decodeText, findBody, headerBlock, parsePart, spliceBody, type InlineImage } from "./mime.js";
 import { embedImages } from "./embed.js";
+import { APTOS_STACK } from "./design.js";
 import type { SignedCopy } from "./sentitems.js";
 import { renderDesign, renderPlainText } from "./render.js";
 import { evaluateRules, type RuleContext } from "./rules.js";
@@ -229,7 +230,11 @@ const DISCLAIMER_GAP = "<br>";
 /** Signature, then campaigns, then disclaimers, always with a line break before the disclaimers. */
 function joinSnippet(signature: string | undefined, campaigns: string[], disclaimers: string[]): string {
   const above = [signature, ...campaigns].filter(Boolean).join("");
-  const below = disclaimers.filter(Boolean).join("");
+  // Disclaimers are in Aptos unless their own text says otherwise.
+  const below = disclaimers
+    .filter(Boolean)
+    .map((html) => `<div style="font-family:${APTOS_STACK};">${html}</div>`)
+    .join("");
   return above && below ? `${above}${DISCLAIMER_GAP}${below}` : above + below;
 }
 

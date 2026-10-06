@@ -72,7 +72,8 @@ export type Block =
   | { id: string; type: "banner"; src: string; href?: string; alt?: string; width?: number }
   | { id: string; type: "row"; columns: Array<{ width: string; blocks: Block[] }> };
 
-export type Design = { width: number; background?: string; blocks: Block[] };
+/** fontUnit "pt": text sizes are points. Older designs have none, and sizes in pixels. */
+export type Design = { width: number; background?: string; blocks: Block[]; fontUnit?: "pt" };
 
 export type Signature = {
   id: string;

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Bold, Code, Italic, Link2, List, RemoveFormatting, Underline } from "lucide-react";
+import { APTOS_STACK, FONTS } from "../lib/fonts";
 
 /**
  * A small WYSIWYG editor for disclaimer text. It edits the HTML that goes into
@@ -10,12 +11,8 @@ import { Bold, Code, Italic, Link2, List, RemoveFormatting, Underline } from "lu
  * classes and fonts that mail clients render unpredictably.
  */
 
-const SIZES = [
-  ["9px", "Tiny"],
-  ["10px", "Small"],
-  ["12px", "Normal"],
-  ["14px", "Large"]
-] as const;
+/** Points, as Outlook and Word use. */
+const SIZES = ["8pt", "9pt", "10pt", "11pt", "12pt", "14pt"] as const;
 
 function exec(command: string, value?: string): void {
   document.execCommand("styleWithCSS", false, "true");
@@ -57,14 +54,14 @@ export function RichTextEditor({
     emit();
   };
 
-  /** execCommand only knows sizes 1-7; mark the selection with 7, then turn that into pixels. */
-  const setSize = (px: string) => {
+  /** execCommand only knows sizes 1-7; mark the selection with 7, then turn that into points. */
+  const setSize = (pt: string) => {
     if (!ref.current) return;
     ref.current.focus();
     exec("fontSize", "7");
     ref.current.querySelectorAll<HTMLElement>('font[size="7"], span[style*="xxx-large"]').forEach((el) => {
       el.removeAttribute("size");
-      el.style.fontSize = px;
+      el.style.fontSize = pt;
     });
     emit();
   };
@@ -97,14 +94,27 @@ export function RichTextEditor({
             <span className="mx-1 h-5 w-px bg-line" />
             <select
               className="h-8 rounded-lg border-0 bg-transparent px-2 text-sm text-slate-600 hover:bg-sky focus:outline-none"
-              title="Text size"
+              title="Font"
+              value=""
+              onChange={(e) => e.target.value && run("fontName", e.target.value)}
+            >
+              <option value="">Font</option>
+              {FONTS.map(([value, label]) => (
+                <option key={label} value={value} style={{ fontFamily: value }}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="h-8 rounded-lg border-0 bg-transparent px-2 text-sm text-slate-600 hover:bg-sky focus:outline-none"
+              title="Text size (pt)"
               value=""
               onChange={(e) => e.target.value && setSize(e.target.value)}
             >
-              <option value="">Size</option>
-              {SIZES.map(([px, label]) => (
-                <option key={px} value={px}>
-                  {label} ({px})
+              <option value="">Size (pt)</option>
+              {SIZES.map((pt) => (
+                <option key={pt} value={pt}>
+                  {pt.replace("pt", "")}
                 </option>
               ))}
             </select>
@@ -161,7 +171,8 @@ export function RichTextEditor({
           contentEditable
           suppressContentEditableWarning
           className="p-4 outline-none [&_a]:text-accent-2 [&_a]:underline [&_ul]:list-disc [&_ul]:pl-5"
-          style={{ minHeight, fontFamily: "Arial, Helvetica, sans-serif", fontSize: 12, color: "#4b5563" }}
+          // As in the email: Aptos unless the text says otherwise, and Outlook's 12pt where no size is set.
+          style={{ minHeight, fontFamily: APTOS_STACK, fontSize: "12pt", color: "#4b5563" }}
           onInput={emit}
           onBlur={emit}
           onPaste={(e) => {

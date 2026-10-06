@@ -433,7 +433,7 @@ function seedDemo(d: Database.Database): void {
   ).run(
     discId,
     "Confidentiality notice",
-    `<p style="font-family:Calibri,Arial,sans-serif;font-size:10px;color:#4b5563;margin:12px 0 0 0;">This email and any attachments are confidential and intended solely for the addressee. If you are not the intended recipient, please delete this message and notify the sender. Unauthorised use, disclosure or copying is prohibited.</p>`,
+    `<p style="font-size:8pt;color:#4b5563;margin:12px 0 0 0;">This email and any attachments are confidential and intended solely for the addressee. If you are not the intended recipient, please delete this message and notify the sender. Unauthorised use, disclosure or copying is prohibited.</p>`,
     now,
     now
   );

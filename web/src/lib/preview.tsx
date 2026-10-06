@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type { Block, Design, TextStyle } from "../api/client";
 import { fieldLabel } from "./fields";
+import { APTOS_STACK } from "./fonts";
 
 export type PreviewUser = Record<string, unknown>;
 
@@ -15,8 +16,9 @@ function interpolate(template: string, user: PreviewUser): string {
 
 function styleOf(style?: TextStyle): CSSProperties {
   return {
-    fontFamily: style?.fontFamily || "Calibri, Arial, sans-serif",
-    fontSize: style?.fontSize ?? 12,
+    fontFamily: style?.fontFamily || APTOS_STACK,
+    // Points, as the designer and Outlook use.
+    fontSize: `${style?.fontSize ?? 9}pt`,
     color: style?.color ?? "#1c1917",
     fontWeight: style?.bold ? 700 : 400,
     fontStyle: style?.italic ? "italic" : "normal",

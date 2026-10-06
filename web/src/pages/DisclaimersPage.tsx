@@ -88,7 +88,7 @@ export function DisclaimerEditPage() {
         id: "",
         name: "New disclaimer",
         enabled: 1,
-        html: "<p style='font-size:10px;color:#4b5563'>Confidential.</p>",
+        html: "<p style='font-size:8pt;color:#4b5563'>Confidential.</p>",
         rules: NEW_RULES
       });
       return;
