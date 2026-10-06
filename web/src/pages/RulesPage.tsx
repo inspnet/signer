@@ -22,11 +22,11 @@ export function RulesPage() {
 
   return (
     <div>
-      <Link to="/signatures" className="text-sm text-stone-500 hover:text-ink">
+      <Link to="/signatures" className="text-sm text-slate-500 hover:text-ink">
         ← Templates
       </Link>
-      <h1 className="display text-4xl mt-2">{sig.name}</h1>
-      <p className="text-stone-600 mt-2">Who this template stamps, and when.</p>
+      <h1 className="text-[28px] leading-9 font-bold tracking-tight text-ink mt-2">{sig.name}</h1>
+      <p className="text-slate-600 mt-2">Who this template stamps, and when.</p>
       <div className="tabs">
         {([["overview", "Overview"], ...RULE_TABS] as const).map(([t, label]) => (
           <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
@@ -41,7 +41,7 @@ export function RulesPage() {
               <input type="checkbox" checked={Boolean(sig.enabled)} onChange={(e) => setSig({ ...sig, enabled: e.target.checked ? 1 : 0 })} />
               Enabled for server-side deployment
             </label>
-            <p className="text-sm text-stone-600">
+            <p className="text-sm text-slate-600">
               Server-side signatures are applied after send via Exchange connectors or Google content compliance. Users cannot
               remove them from iOS Mail or other clients.
             </p>

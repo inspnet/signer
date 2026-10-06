@@ -34,10 +34,10 @@ export function DisclaimersPage() {
             <div className="min-w-0">
               <div className="font-medium">
                 {d.name}
-                {!d.enabled && <span className="ml-2 rounded bg-mist px-2 py-0.5 text-xs text-stone-600">Disabled</span>}
+                {!d.enabled && <span className="ml-2 rounded bg-mist px-2 py-0.5 text-xs text-slate-600">Disabled</span>}
               </div>
-              <div className="text-sm text-stone-500 mt-1">{describeRules(d.rules, groups)}</div>
-              <div className="mt-3 text-xs text-stone-600" dangerouslySetInnerHTML={{ __html: d.html }} />
+              <div className="text-sm text-slate-500 mt-1">{describeRules(d.rules, groups)}</div>
+              <div className="mt-3 text-xs text-slate-600" dangerouslySetInnerHTML={{ __html: d.html }} />
             </div>
             <div className="flex gap-2 shrink-0 items-start">
               <Link className="btn btn-ghost" to={`/disclaimers/${d.id}`}>
@@ -56,7 +56,7 @@ export function DisclaimersPage() {
             </div>
           </div>
         ))}
-        {items.length === 0 && <p className="text-stone-500">No disclaimers yet.</p>}
+        {items.length === 0 && <p className="text-slate-500">No disclaimers yet.</p>}
       </div>
     </div>
   );
@@ -95,7 +95,7 @@ export function DisclaimerEditPage() {
     void api.disclaimers().then((all) => setItem(all.find((d) => d.id === id) ?? null));
   }, [id]);
 
-  if (!item) return <p className="text-stone-500">Loading…</p>;
+  if (!item) return <p className="text-slate-500">Loading…</p>;
 
   const save = async () => {
     setMessage("");
@@ -117,11 +117,11 @@ export function DisclaimerEditPage() {
 
   return (
     <div>
-      <Link to="/disclaimers" className="text-sm text-stone-500 hover:text-ink">
+      <Link to="/disclaimers" className="text-sm text-slate-500 hover:text-ink">
         ← Disclaimers
       </Link>
-      <h1 className="display text-4xl mt-2">{item.name || "Disclaimer"}</h1>
-      <p className="text-stone-600 mt-2">{describeRules(item.rules, groups)}</p>
+      <h1 className="text-[28px] leading-9 font-bold tracking-tight text-ink mt-2">{item.name || "Disclaimer"}</h1>
+      <p className="text-slate-600 mt-2">{describeRules(item.rules, groups)}</p>
       <div className="tabs">
         {([["content", "Content"], ...RULE_TABS] as const).map(([t, label]) => (
           <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
@@ -151,9 +151,9 @@ export function DisclaimerEditPage() {
               </label>
             </div>
             <div>
-              <div className="text-sm text-stone-500 mb-1">Preview</div>
+              <div className="text-sm text-slate-500 mb-1">Preview</div>
               <div className="rounded-lg border border-line bg-white p-4" dangerouslySetInnerHTML={{ __html: item.html }} />
-              <p className="mt-3 text-xs text-stone-500 leading-5">
+              <p className="mt-3 text-xs text-slate-500 leading-5">
                 Use the Senders tab to limit this to one domain (for example, a different legal entity per domain), a group
                 or particular people, and Recipients for external-only notices.
               </p>
@@ -173,7 +173,7 @@ export function DisclaimerEditPage() {
           <button className="btn btn-primary" onClick={() => void save()}>
             Save disclaimer
           </button>
-          {message && <span className="text-sm text-stone-600">{message}</span>}
+          {message && <span className="text-sm text-slate-600">{message}</span>}
         </div>
       </div>
     </div>

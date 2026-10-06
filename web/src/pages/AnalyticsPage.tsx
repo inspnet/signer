@@ -8,7 +8,7 @@ export function AnalyticsPage() {
   useEffect(() => {
     void api.analytics().then(setData);
   }, []);
-  if (!data) return <p className="text-stone-500">Loading…</p>;
+  if (!data) return <p className="text-slate-500">Loading…</p>;
   return (
     <div>
       <PageHeader kicker="Activity" title="Mail log" description="Message metadata only — Signer does not retain email bodies after processing." />
@@ -19,12 +19,12 @@ export function AnalyticsPage() {
           ["Problems (24h)", data.failed24h]
         ].map(([k, v]) => (
           <div key={String(k)} className="panel p-5">
-            <div className="text-sm text-stone-500">{k}</div>
-            <div className="display text-4xl mt-1">{v}</div>
+            <div className="stat-label">{k}</div>
+            <div className="stat-value">{v}</div>
           </div>
         ))}
       </div>
-      <p className="mt-6 text-sm text-stone-600 leading-6">
+      <p className="mt-6 text-sm text-slate-600 leading-6">
         <strong>Unsigned</strong> means the message was delivered without a signature; <strong>Deferred</strong> means it could not
         be handed back yet, so Microsoft 365 or Google keep it and retry. Each says why underneath.
       </p>

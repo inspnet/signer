@@ -18,9 +18,9 @@ export function SignaturesPage() {
     <div>
       <div className="flex items-end justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.16em] text-accent-2 font-semibold">Library</p>
-          <h1 className="display text-4xl mt-1">Signatures</h1>
-          <p className="text-stone-600 mt-2">Evaluated top to bottom. The first match is stamped on the message.</p>
+          <p className="text-xs uppercase tracking-[0.14em] text-slate-400 font-semibold">Library</p>
+          <h1 className="text-[28px] leading-9 font-bold tracking-tight text-ink mt-1">Signatures</h1>
+          <p className="text-slate-600 mt-2">Evaluated top to bottom. The first match is stamped on the message.</p>
         </div>
         <div className="flex gap-2">
           <button className="btn btn-primary" onClick={() => setCreating(true)}>
@@ -98,7 +98,7 @@ export function SignaturesPage() {
                     {s.enabled ? "Live" : "Off"}
                   </span>
                 </div>
-                <p className="text-sm text-stone-500 mt-2">
+                <p className="text-sm text-slate-500 mt-2">
                   {s.rules.senders.everyone ? "Everyone" : "Filtered senders"} ·{" "}
                   {s.rules.recipients.external ? "External recipients" : s.rules.recipients.internal ? "Internal" : "Any recipient"}
                 </p>
@@ -125,7 +125,7 @@ export function SignaturesPage() {
               navigate(`/signatures/${created.id}/design`);
             }}
           >
-            <h2 className="display text-2xl">New template</h2>
+            <h2 className="text-lg font-semibold tracking-tight">New template</h2>
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
             <div className="flex justify-end gap-2">
               <button type="button" className="btn btn-ghost" onClick={() => setCreating(false)}>

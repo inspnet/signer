@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type AlertConfig, type DirectoryPerson, type RelayDiagnosis, type UpdateCheck, type UpdateStatus } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
+import { useAuth } from "../layouts/Auth";
 
 export function SettingsPage() {
   const [tab, setTab] = useState<"flow" | "domains" | "directory" | "fields" | "admins" | "alerts" | "updates">("flow");
@@ -34,7 +35,7 @@ function MailFlow() {
   useEffect(() => {
     void api.mailFlow().then(setData);
   }, []);
-  if (!data) return <p className="mt-4 text-stone-500">Loading…</p>;
+  if (!data) return <p className="mt-4 text-slate-500">Loading…</p>;
   const ms = data.microsoft as {
     powershell: string;
     sendConnector: Record<string, string>;
@@ -50,7 +51,7 @@ function MailFlow() {
     <div className="mt-6 space-y-6">
       <div className="grid gap-6 xl:grid-cols-2 items-start">
         <div className="space-y-4">
-          <p className="text-stone-600 leading-7">{(data.notes as string[]).join(" ")}</p>
+          <p className="text-slate-600 leading-7">{(data.notes as string[]).join(" ")}</p>
           <PublicIpNote ip={data.publicIp as PublicIpInfo} />
         </div>
         <ReturnPathTest />
@@ -58,7 +59,7 @@ function MailFlow() {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
         <section className="panel p-5">
           <h2 className="font-semibold text-lg">Microsoft 365 / Exchange Online</h2>
-          <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-stone-700">
+          <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-slate-700">
             <li>
               Create an outbound connector to {ms.sendConnector.smartHost} (port 25), validating its TLS certificate, scoped to a
               transport rule.
@@ -78,7 +79,7 @@ function MailFlow() {
         <div className="space-y-6">
           <section className="panel p-5">
             <h2 className="font-semibold text-lg">Google Workspace</h2>
-            <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-stone-700">
+            <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-slate-700">
               <li>
                 Hosts: add {String(google.hostRoute.host)} port {String(google.hostRoute.port)}.
               </li>
@@ -86,7 +87,7 @@ function MailFlow() {
               <li>Content compliance: {google.contentCompliance.expression}, then change route to Signer with TLS.</li>
             </ol>
           </section>
-          <p className="text-sm text-stone-600 leading-6">{String(data.spf)}</p>
+          <p className="text-sm text-slate-600 leading-6">{String(data.spf)}</p>
         </div>
       </div>
     </div>
@@ -104,12 +105,14 @@ function Directory() {
     void api.fields().then(setFields);
   }, []);
 
+  const [showDisabled, setShowDisabled] = useState(false);
   const q = query.trim().toLowerCase();
-  const shown = q
-    ? users.filter((u) =>
-        [u.displayName, u.email, u.jobTitle, u.department].some((v) => String(v ?? "").toLowerCase().includes(q))
-      )
-    : users;
+  const disabledCount = users.filter((u) => u.enabled === 0).length;
+  const shown = users.filter(
+    (u) =>
+      (showDisabled || u.enabled !== 0) &&
+      (!q || [u.displayName, u.email, u.jobTitle, u.department].some((v) => String(v ?? "").toLowerCase().includes(q)))
+  );
 
   return (
     <div className="mt-6 space-y-4">
@@ -145,41 +148,51 @@ function Directory() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <span className="text-sm text-stone-500">
+        {disabledCount > 0 && (
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input type="checkbox" checked={showDisabled} onChange={(e) => setShowDisabled(e.target.checked)} />
+            Include {disabledCount} disabled account{disabledCount === 1 ? "" : "s"}
+          </label>
+        )}
+        <span className="text-sm text-slate-500 ml-auto">
           {shown.length} of {users.length}
         </span>
       </div>
-      {status && <p className="text-sm text-stone-600">{status}</p>}
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="panel overflow-hidden">
+      {status && <p className="text-sm text-slate-600">{status}</p>}
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px] items-start">
+        <div className="panel overflow-auto max-h-[calc(100vh-16rem)]">
           <table className="w-full text-sm">
-            <thead className="bg-mist text-left text-stone-500">
+            <thead className="table-head sticky top-0 z-10">
               <tr>
-                <th className="p-3 font-medium">Name</th>
-                <th className="font-medium">Email</th>
-                <th className="font-medium">Title</th>
-                <th className="font-medium">Source</th>
+                <th className="px-4 py-3 font-medium">Name</th>
+                <th className="px-4 py-3 font-medium">Email</th>
+                <th className="px-4 py-3 font-medium">Title</th>
+                <th className="px-4 py-3 font-medium">Department</th>
+                <th className="px-4 py-3 font-medium">Source</th>
               </tr>
             </thead>
             <tbody>
               {shown.map((u) => (
                 <tr
                   key={u.id}
-                  className={`border-t border-line cursor-pointer hover:bg-mist ${selected?.id === u.id ? "bg-mist" : ""}`}
+                  className={`border-t border-line cursor-pointer transition-colors ${
+                    selected?.id === u.id ? "bg-sky" : "hover:bg-paper"
+                  }`}
                   onClick={() => setSelected(u)}
                 >
-                  <td className="p-3">
+                  <td className="px-4 py-2.5 font-medium text-ink">
                     {u.displayName}
-                    {u.enabled === 0 && <span className="ml-2 text-xs text-stone-400">disabled</span>}
+                    {u.enabled === 0 && <span className="badge ml-2">Disabled</span>}
                   </td>
-                  <td>{u.email}</td>
-                  <td>{u.jobTitle}</td>
-                  <td className="capitalize">{String(u.source ?? "")}</td>
+                  <td className="px-4 py-2.5 text-slate-600">{u.email}</td>
+                  <td className="px-4 py-2.5 text-slate-600">{u.jobTitle}</td>
+                  <td className="px-4 py-2.5 text-slate-600">{u.department}</td>
+                  <td className="px-4 py-2.5 text-slate-500 capitalize">{String(u.source ?? "")}</td>
                 </tr>
               ))}
               {!shown.length && (
                 <tr>
-                  <td className="p-3 text-stone-500" colSpan={4}>
+                  <td className="px-4 py-3 text-slate-500" colSpan={5}>
                     {users.length ? "Nobody matches that search." : "Nobody yet: run a directory sync."}
                   </td>
                 </tr>
@@ -216,21 +229,21 @@ function PersonEditor(props: {
   );
   const [message, setMessage] = useState("");
   return (
-    <div className="panel p-5 text-sm space-y-4 self-start">
+    <div className="panel p-5 text-sm space-y-5 xl:sticky xl:top-6 xl:max-h-[calc(100vh-3rem)] xl:overflow-auto">
       <div>
-        <h2 className="font-semibold text-lg">{person.displayName}</h2>
-        <p className="text-stone-500">{person.email}</p>
+        <h2 className="font-bold text-lg text-ink">{person.displayName}</h2>
+        <p className="text-slate-500">{person.email}</p>
       </div>
       <div>
         <h3 className="font-medium">
           From {person.source === "google" ? "Google Workspace" : person.source === "entra" ? "Entra ID" : "the directory"}
         </h3>
-        <p className="text-xs text-stone-500 mb-2">Read-only here. Change these in the directory; the next sync picks them up.</p>
-        <dl className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-1">
+        <p className="text-xs text-slate-500 mb-2">Read-only here. Change these in the directory; the next sync picks them up.</p>
+        <dl className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5">
           {fromDirectory.map((f) => (
             <div key={f.key} className="contents">
-              <dt className="text-stone-500">{f.label}</dt>
-              <dd>{String(person[f.key] ?? "") || <span className="text-stone-300">—</span>}</dd>
+              <dt className="text-slate-500">{f.label}</dt>
+              <dd className="break-words text-ink">{String(person[f.key] ?? "") || <span className="text-slate-300">—</span>}</dd>
             </div>
           ))}
         </dl>
@@ -252,9 +265,9 @@ function PersonEditor(props: {
         <h3 className="font-medium">Signature details</h3>
         {editable.map((f) => (
           <label key={f.key} className="block">
-            <span className="text-stone-600">
+            <span className="text-slate-600">
               {f.label}
-              {f.userEditable && <span className="ml-1 text-xs text-stone-400">(they can edit this too)</span>}
+              {f.userEditable && <span className="ml-1 text-xs text-slate-400">(they can edit this too)</span>}
             </span>
             <input
               className="input mt-1"
@@ -264,7 +277,7 @@ function PersonEditor(props: {
           </label>
         ))}
         <button className="btn btn-primary">Save</button>
-        {message && <p className="text-stone-600">{message}</p>}
+        {message && <p className="text-slate-600">{message}</p>}
       </form>
     </div>
   );
@@ -277,12 +290,12 @@ function Fields() {
   }, []);
   return (
     <div className="mt-6 panel p-5">
-      <p className="text-sm text-stone-600 mb-4">Users may edit only the fields you enable. Directory-sourced values remain the default until overridden.</p>
+      <p className="text-sm text-slate-600 mb-4">Users may edit only the fields you enable. Directory-sourced values remain the default until overridden.</p>
       <div className="grid gap-x-10 sm:grid-cols-2 xl:grid-cols-3">
         {fields.map((f) => (
           <label key={f.key} className="flex items-center justify-between gap-3 py-1.5 text-sm border-b border-line">
             <span>
-              {f.label} {f.directory && <span className="text-stone-400">(directory)</span>}
+              {f.label} {f.directory && <span className="text-slate-400">(directory)</span>}
             </span>
             <input
               type="checkbox"
@@ -304,26 +317,56 @@ function Fields() {
   );
 }
 
+const ROLE_OPTIONS = [
+  ["owner", "Owner"],
+  ["admin", "Admin"],
+  ["editor", "Editor"],
+  ["designer", "Designer"]
+] as const;
+
 function Admins() {
+  const { user } = useAuth();
   const [data, setData] = useState<Awaited<ReturnType<typeof api.admins>> | null>(null);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("editor");
+  const [error, setError] = useState("");
+  const load = () => api.admins().then(setData);
   useEffect(() => {
-    void api.admins().then(setData);
+    void load();
   }, []);
-  if (!data) return <p className="mt-4 text-stone-500">Loading…</p>;
+  if (!data) return <p className="mt-4 text-slate-500">Loading…</p>;
+  const isSuper = user?.role === "super_admin";
+  const act = async (fn: () => Promise<unknown>) => {
+    setError("");
+    try {
+      await fn();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  /** Mirrors the server's rules, so buttons that would be refused are not offered. */
+  const locked = (r: { email: string; role: string }) =>
+    r.email === user?.email.toLowerCase()
+      ? "Your own role: ask another admin to change it"
+      : r.role === "owner" && !isSuper
+        ? "Only the super admin can change an owner"
+        : "";
   return (
     <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
       <div>
-        <p className="text-sm text-stone-600">
-          Super admin is <strong>{data.superAdmin || "(set SUPER_ADMIN_EMAIL)"}</strong> and is not stored in the database.
+        <p className="text-sm text-slate-600">
+          Super admin is <strong>{data.superAdmin || "(set SUPER_ADMIN_EMAIL)"}</strong>, set on the server. Everyone else who
+          signs in is a user unless they have a role here.
         </p>
         <form
           className="mt-4 flex gap-2"
-          onSubmit={async (e) => {
+          onSubmit={(e) => {
             e.preventDefault();
-            await api.saveAdmin(email, role);
-            setData(await api.admins());
+            void act(async () => {
+              await api.saveAdmin(email, role);
+              setEmail("");
+            });
           }}
         >
           <input
@@ -335,27 +378,82 @@ function Admins() {
             onChange={(e) => setEmail(e.target.value)}
           />
           <select className="input w-40 shrink-0" value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="owner">Owner</option>
-            <option value="admin">Admin</option>
-            <option value="editor">Editor</option>
-            <option value="designer">Designer</option>
-            <option value="user">User</option>
+            {ROLE_OPTIONS.filter(([value]) => value !== "owner" || isSuper).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
           </select>
           <button className="btn btn-primary">Grant</button>
         </form>
-        <ul className="mt-4 panel divide-y divide-line">
-          {data.roles.map((r) => (
-            <li key={r.email} className="p-3 flex justify-between text-sm">
-              <span>{r.email}</span>
-              <span className="text-stone-500 capitalize">{r.role}</span>
-            </li>
-          ))}
-          {!data.roles.length && <li className="p-3 text-sm text-stone-500">No roles granted yet. Everyone else signs in as a user.</li>}
-        </ul>
+        {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
+        <div className="mt-4 panel overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="table-head">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">Email</th>
+                <th className="px-4 py-2.5 font-medium w-48">Role</th>
+                <th className="px-4 py-2.5 w-24" />
+              </tr>
+            </thead>
+            <tbody>
+              {data.roles.map((r) => {
+                const why = locked(r);
+                return (
+                  <tr key={r.email} className="border-t border-line">
+                    <td className="px-4 py-2">{r.email}</td>
+                    <td className="px-4 py-2">
+                      {why ? (
+                        <span className="capitalize text-slate-600" title={why}>
+                          {r.role}
+                        </span>
+                      ) : (
+                        <select
+                          className="input py-1"
+                          value={r.role}
+                          aria-label={`Role for ${r.email}`}
+                          onChange={(e) => void act(() => api.saveAdmin(r.email, e.target.value))}
+                        >
+                          {ROLE_OPTIONS.filter(([value]) => value !== "owner" || isSuper).map(([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      {!why && (
+                        <button
+                          className="text-sm text-red-700 hover:underline"
+                          onClick={() => {
+                            if (confirm(`Remove ${r.email}'s ${r.role} role? They will sign in as an ordinary user.`)) {
+                              void act(() => api.removeAdmin(r.email));
+                            }
+                          }}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {!data.roles.length && (
+                <tr>
+                  <td className="px-4 py-3 text-slate-500" colSpan={3}>
+                    No roles granted yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">Changes apply on that person&apos;s next click; they do not need to sign out.</p>
       </div>
       <section className="panel p-5 text-sm">
-        <h2 className="font-semibold text-lg">What each role can do</h2>
-        <dl className="mt-3 grid grid-cols-[6rem_1fr] gap-x-3 gap-y-2 text-stone-700">
+        <h2 className="font-semibold text-base">What each role can do</h2>
+        <dl className="mt-3 grid grid-cols-[6rem_1fr] gap-x-3 gap-y-2 text-slate-700">
           {ROLES.map(([name, can]) => (
             <div key={name} className="contents">
               <dt className="font-medium">{name}</dt>
@@ -363,6 +461,9 @@ function Admins() {
             </div>
           ))}
         </dl>
+        <p className="mt-4 text-xs text-slate-500">
+          Nobody can change their own role, and only the super admin can grant, change or remove the owner role.
+        </p>
       </section>
     </div>
   );
@@ -393,17 +494,17 @@ function Domains() {
       setError(err instanceof Error ? err.message : String(err));
     }
   };
-  if (!data) return <p className="mt-4 text-stone-500">Loading…</p>;
+  if (!data) return <p className="mt-4 text-slate-500">Loading…</p>;
   return (
     <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
       <div className="space-y-4 xl:order-2">
-        <p className="text-sm text-stone-600 leading-6">
+        <p className="text-sm text-slate-600 leading-6">
           The email domains this Microsoft 365 or Google Workspace tenant sends from. Only senders on these domains get a
           signature, disclaimer or campaign; mail from any other domain passes through unchanged. Recipients on these domains
           count as <strong>internal</strong> in rules. The connectors and routing rules already cover every domain in the
           tenant, so adding a domain here needs no change in Exchange or Google.
         </p>
-        <p className="text-sm text-stone-600 leading-6">
+        <p className="text-sm text-slate-600 leading-6">
           {data.perDomainMx ? (
             <>
               Signed mail goes back to each domain&apos;s own Microsoft 365 endpoint, found from its MX record. A domain whose MX is
@@ -440,9 +541,9 @@ function Domains() {
             <li key={d.name} className="p-3 flex items-start justify-between gap-4 text-sm">
               <span className="min-w-0">
                 <strong>{d.name}</strong>
-                {d.primary && <span className="ml-2 rounded bg-mist px-2 py-0.5 text-xs text-stone-600">Primary</span>}
+                {d.primary && <span className="ml-2 rounded bg-mist px-2 py-0.5 text-xs text-slate-600">Primary</span>}
                 {d.route && (
-                  <span className="block text-xs text-stone-500 mt-1">
+                  <span className="block text-xs text-slate-500 mt-1">
                     Returns to <code>{d.route.host || "(nowhere: UPSTREAM_HOST is not set)"}</code> · {d.route.detail}
                   </span>
                 )}
@@ -470,17 +571,17 @@ function Domains() {
               )}
             </li>
           ))}
-          {!data.domains.length && <li className="p-3 text-sm text-stone-500">No domains yet: every sender is signed until you add one.</li>}
+          {!data.domains.length && <li className="p-3 text-sm text-slate-500">No domains yet: every sender is signed until you add one.</li>}
         </ul>
         {data.suggestions.length > 0 && (
           <div>
             <h3 className="font-medium text-sm">Found in the directory</h3>
-            <p className="text-xs text-stone-500 mt-1">Staff addresses use these domains, but they are not in the list.</p>
+            <p className="text-xs text-slate-500 mt-1">Staff addresses use these domains, but they are not in the list.</p>
             <ul className="mt-2 panel divide-y divide-line">
               {data.suggestions.map((s) => (
                 <li key={s.domain} className="p-3 flex items-center justify-between text-sm">
                   <span>
-                    {s.domain} <span className="text-stone-400">({s.people} {s.people === 1 ? "person" : "people"})</span>
+                    {s.domain} <span className="text-slate-400">({s.people} {s.people === 1 ? "person" : "people"})</span>
                   </span>
                   <button className="btn btn-ghost" onClick={() => void act(() => api.addDomain(s.domain))}>
                     Add
@@ -535,7 +636,7 @@ function Updates() {
     return () => clearInterval(timer);
   }, [polling]);
 
-  if (!info) return <p className="mt-4 text-stone-500">Loading…</p>;
+  if (!info) return <p className="mt-4 text-slate-500">Loading…</p>;
   const current = info.current;
   return (
     <div className="mt-6 grid gap-6 xl:grid-cols-2 items-start">
@@ -547,17 +648,17 @@ function Updates() {
               <p>
                 <code>{shortSha(current.commit)}</code> {current.subject}
               </p>
-              <p className="text-stone-500">
+              <p className="text-slate-500">
                 {current.date && new Date(current.date).toLocaleString()} · branch {current.branch}
               </p>
             </>
           ) : (
-            <p className="text-stone-500">Not a git checkout, so the version is unknown.</p>
+            <p className="text-slate-500">Not a git checkout, so the version is unknown.</p>
           )}
         </section>
 
         {!info.available ? (
-          <p className="text-sm text-stone-600 leading-6">
+          <p className="text-sm text-slate-600 leading-6">
             Updating from the portal needs a server set up with <code>deploy/install.sh</code>. To turn it on for an install
             made before this feature existed, re-run the installer once on the server:{" "}
             <code>curl -fsSL https://raw.githubusercontent.com/inspnet/signer/main/deploy/install.sh -o install.sh && sudo bash install.sh</code>
@@ -606,7 +707,7 @@ function Updates() {
               )}
             </div>
             {error && <p className="text-red-700">{error}</p>}
-            {check && !check.updateAvailable && <p className="text-stone-600">Signer is up to date.</p>}
+            {check && !check.updateAvailable && <p className="text-slate-600">Signer is up to date.</p>}
             {check?.updateAvailable && (
               <div>
                 <p>
@@ -616,7 +717,7 @@ function Updates() {
                 <ul className="mt-2 list-disc ml-5 space-y-1">
                   {check.commits.map((c) => (
                     <li key={c.commit}>
-                      {c.subject} <span className="text-stone-400">— {new Date(c.date).toLocaleDateString()}</span>
+                      {c.subject} <span className="text-slate-400">— {new Date(c.date).toLocaleDateString()}</span>
                     </li>
                   ))}
                 </ul>
@@ -637,13 +738,13 @@ function Updates() {
           <h2 className="font-semibold">
             Last update: {status.state.replace("-", " ")}
             {status.from && status.to && (
-              <span className="font-normal text-stone-500">
+              <span className="font-normal text-slate-500">
                 {" "}
                 ({shortSha(status.from)} → {shortSha(status.to)})
               </span>
             )}
           </h2>
-          <p className="mt-1 text-stone-600">{status.message}</p>
+          <p className="mt-1 text-slate-600">{status.message}</p>
           {status.state === "succeeded" && (
             <button className="btn btn-ghost mt-2" onClick={() => window.location.reload()}>
               Reload the portal
@@ -661,7 +762,7 @@ function ReturnHostEditor(props: { domain: string; value: string; onSaved: () =>
   const [host, setHost] = useState(props.value);
   if (!open) {
     return (
-      <button className="block mt-1 text-xs text-teal-800 underline" onClick={() => setOpen(true)}>
+      <button className="block mt-1 text-xs text-accent-2 hover:underline font-medium" onClick={() => setOpen(true)}>
         {props.value ? "Change return host" : "Set a return host"}
       </button>
     );
@@ -722,7 +823,7 @@ function PublicIpNote({ ip }: { ip: PublicIpInfo }) {
   );
 }
 
-const STEP_TONE = { ok: "text-teal-800", warn: "text-amber-800", fail: "text-red-700", skipped: "text-stone-500" } as const;
+const STEP_TONE = { ok: "text-emerald-700", warn: "text-amber-800", fail: "text-red-700", skipped: "text-slate-500" } as const;
 const STEP_MARK = { ok: "✓", warn: "!", fail: "✕", skipped: "–" } as const;
 
 /**
@@ -761,7 +862,7 @@ function ReturnPathTest() {
   return (
     <section id="return-path" className="panel p-5">
       <h2 className="font-semibold text-lg">Test the return path</h2>
-      <p className="mt-2 text-sm text-stone-600 leading-6">
+      <p className="mt-2 text-sm text-slate-600 leading-6">
         Connects to where signed mail for the domain goes back to, exactly as a real message would: TLS, sender, then one of your
         mailboxes and an address outside your organisation. It stops before sending, so nothing is delivered. The outside address
         is the real test for Microsoft 365: it only accepts it when the &quot;Signer receive&quot; connector recognises this server.
@@ -774,7 +875,7 @@ function ReturnPathTest() {
         }}
       >
         <label className="text-sm">
-          <span className="block text-stone-500 mb-1">Domain</span>
+          <span className="block text-slate-500 mb-1">Domain</span>
           <select className="input" value={domain} onChange={(e) => setDomain(e.target.value)}>
             {domains.map((d) => (
               <option key={d}>{d}</option>
@@ -782,7 +883,7 @@ function ReturnPathTest() {
           </select>
         </label>
         <label className="text-sm flex-1 min-w-[14rem]">
-          <span className="block text-stone-500 mb-1">Outside address (optional)</span>
+          <span className="block text-slate-500 mb-1">Outside address (optional)</span>
           <input
             className="input w-full"
             placeholder="signer-relay-check@example.com"
@@ -797,12 +898,12 @@ function ReturnPathTest() {
       {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
       {result && (
         <div className="mt-4">
-          <p className={`text-sm font-semibold ${result.ok ? "text-teal-800" : "text-red-700"}`}>
+          <p className={`text-sm font-semibold ${result.ok ? "text-emerald-700" : "text-red-700"}`}>
             {result.ok
               ? `Signed mail from ${result.domain} can get back to ${result.target.host}.`
               : `Signed mail from ${result.domain} cannot get back to ${result.target.host}.`}
           </p>
-          <p className="text-xs text-stone-500 mt-1">
+          <p className="text-xs text-slate-500 mt-1">
             {result.target.host}:{result.target.port}, {result.target.tls}
             {result.target.auth ? ", signed in" : ""}: {result.target.route}
           </p>
@@ -812,8 +913,8 @@ function ReturnPathTest() {
                 <span className={`w-4 font-bold ${STEP_TONE[s.status]}`}>{STEP_MARK[s.status]}</span>
                 <span className="min-w-0">
                   <span className="font-medium">{s.step}</span>
-                  <span className="text-stone-600 break-words"> — {s.detail}</span>
-                  {s.ms > 0 && <span className="text-stone-400 text-xs"> {s.ms} ms</span>}
+                  <span className="text-slate-600 break-words"> — {s.detail}</span>
+                  {s.ms > 0 && <span className="text-slate-400 text-xs"> {s.ms} ms</span>}
                 </span>
               </li>
             ))}
@@ -854,7 +955,7 @@ function Alerts() {
   useEffect(() => {
     void api.alerts().then(adopt);
   }, []);
-  if (!saved) return <p className="mt-4 text-stone-500">Loading…</p>;
+  if (!saved) return <p className="mt-4 text-slate-500">Loading…</p>;
 
   const run = async (fn: () => Promise<string>) => {
     setBusy(true);
@@ -925,7 +1026,7 @@ function Alerts() {
             value={form.recipients}
             onChange={(e) => setForm({ ...form, recipients: e.target.value })}
           />
-          <span className="block mt-1 text-xs text-stone-500">Use addresses that do not depend on this tenant's mail flow, if you can.</span>
+          <span className="block mt-1 text-xs text-slate-500">Use addresses that do not depend on this tenant's mail flow, if you can.</span>
         </label>
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_10rem]">
           <label className="block">
@@ -959,16 +1060,16 @@ function Alerts() {
           <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void test()}>
             Save and send a test
           </button>
-          {message && <span className={message.ok ? "text-teal-800" : "text-red-700"}>{message.text}</span>}
+          {message && <span className={message.ok ? "text-emerald-700" : "text-red-700"}>{message.text}</span>}
         </div>
         {saved.last && (
-          <p className="text-xs text-stone-500">
+          <p className="text-xs text-slate-500">
             Last {saved.last.kind === "test" ? "test" : saved.last.kind === "recovery" ? "recovery notice" : "alert"}:{" "}
             {new Date(saved.last.at).toLocaleString()} — <span className={saved.last.ok ? "" : "text-red-700"}>{saved.last.detail}</span>
           </p>
         )}
       </form>
-      <section className="panel p-5 text-sm leading-6 text-stone-700 space-y-3">
+      <section className="panel p-5 text-sm leading-6 text-slate-700 space-y-3">
         <h2 className="font-semibold text-lg text-ink">How alerts work</h2>
         <p>
           Signer emails these addresses when a message is <strong>Deferred</strong> (it could not be handed back, so Microsoft 365
@@ -984,7 +1085,7 @@ function Alerts() {
           They contain counts, sender domains and the reasons, with email addresses removed. The full detail stays in Activity on
           this server.
         </p>
-        <p className="text-xs text-stone-500">
+        <p className="text-xs text-slate-500">
           In Mailgun: add and verify a sending domain (a subdomain such as mg.yourdomain.com keeps it apart from your main mail), then
           create a sending API key for it under Domain settings → Sending keys. Pick the region the domain was created in.
         </p>

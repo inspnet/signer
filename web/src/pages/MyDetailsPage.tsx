@@ -14,12 +14,12 @@ export function MyDetailsPage() {
     });
   }, []);
 
-  if (!data) return <p className="text-stone-500">Loading…</p>;
+  if (!data) return <p className="text-slate-500">Loading…</p>;
   if (!data.user) {
     return (
       <div>
         <PageHeader kicker="You" title="My Details" />
-        <p className="mt-3 text-stone-600">
+        <p className="mt-3 text-slate-600">
           Your account is not in the cached directory yet. Ask an admin to run a directory sync, or sign in with the same email as your
           mailbox.
         </p>
@@ -69,7 +69,7 @@ export function MyDetailsPage() {
       >
         Save my details
       </button>
-      {message && <p className="text-sm text-teal-800 mt-2">{message}</p>}
+      {message && <p className="text-sm text-emerald-700 mt-2">{message}</p>}
     </div>
   );
 }

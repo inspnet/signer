@@ -326,7 +326,7 @@ function SenderEditor({
             {g.name}
           </label>
         ))}
-        {groups.length === 0 && <p className="text-sm text-stone-500">Sync Entra or Google groups in Settings.</p>}
+        {groups.length === 0 && <p className="text-sm text-slate-500">Sync Entra or Google groups in Settings.</p>}
       </div>
     </div>
   );

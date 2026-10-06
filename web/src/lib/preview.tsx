@@ -57,7 +57,7 @@ export function LiveBlock({
   const active = selected === block.id;
   return (
     <div
-      className={`relative rounded-sm ${active ? "ring-2 ring-accent ring-offset-2 bg-teal-50/30" : "hover:outline hover:outline-1 hover:outline-line"}`}
+      className={`relative rounded-sm ${active ? "ring-2 ring-accent ring-offset-2 bg-sky/40" : "hover:outline hover:outline-1 hover:outline-line"}`}
       onClick={(e) => {
         e.stopPropagation();
         onSelect(block.id);
@@ -92,7 +92,7 @@ function BlockBody({
       return (
         <p style={styleOf(block.style)}>
           {block.prefix}
-          {value || <span className="text-stone-300 italic">{`{${block.field}}`}</span>}
+          {value || <span className="text-slate-300 italic">{`{${block.field}}`}</span>}
           {block.suffix}
         </p>
       );
@@ -111,7 +111,7 @@ function BlockBody({
         );
       }
       return (
-        <div className="border border-dashed border-line text-stone-400 text-xs px-4 py-5 text-center rounded-md bg-mist/40">
+        <div className="border border-dashed border-line text-slate-400 text-xs px-4 py-5 text-center rounded-md bg-mist/40">
           Paste a logo URL in the inspector
         </div>
       );
@@ -121,7 +121,7 @@ function BlockBody({
       return src ? (
         <img src={src} width={block.width ?? 460} alt={block.alt || ""} />
       ) : (
-        <div className="border border-dashed border-line text-stone-400 text-xs px-4 py-8 text-center rounded-md bg-mist/40">
+        <div className="border border-dashed border-line text-slate-400 text-xs px-4 py-8 text-center rounded-md bg-mist/40">
           Banner image URL
         </div>
       );
@@ -142,7 +142,7 @@ function BlockBody({
               {SOCIAL_MARK[n.name] ?? n.name[0]}
             </span>
           ))}
-          {block.networks.length === 0 && <span className="text-xs text-stone-400">Social icons</span>}
+          {block.networks.length === 0 && <span className="text-xs text-slate-400">Social icons</span>}
         </div>
       );
     case "row":

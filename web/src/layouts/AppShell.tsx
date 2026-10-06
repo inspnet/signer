@@ -36,43 +36,47 @@ export function AppShell() {
     .toUpperCase();
 
   return (
-    <div className="min-h-full flex bg-paper">
-      <aside className="w-[232px] shrink-0 bg-ink text-[#e7e0d4] flex flex-col">
-        <button className="flex items-center gap-3 px-5 h-16 text-left" onClick={() => navigate("/")}>
-          <span className="h-8 w-8 rounded-lg bg-accent grid place-items-center text-white">
-            <PenLine size={16} />
+    <div className="h-full flex bg-paper">
+      <aside className="w-[248px] shrink-0 bg-white border-r border-line flex flex-col">
+        <button className="flex items-center gap-3 px-6 h-20 text-left" onClick={() => navigate("/")}>
+          <span className="h-9 w-9 rounded-xl bg-navy grid place-items-center text-white shadow-sm">
+            <PenLine size={17} />
           </span>
           <span>
-            <span className="block font-semibold text-white tracking-tight">Signer</span>
-            <span className="block text-[11px] text-stone-400">Server-side mail</span>
+            <span className="block font-bold text-ink tracking-tight text-[15px]">Signer</span>
+            <span className="block text-[11px] text-slate-500">Server-side signatures</span>
           </span>
         </button>
-        <nav className="flex-1 px-3 py-2 space-y-0.5">
+        <nav className="flex-1 px-4 py-2 space-y-1">
           {nav.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
               className={({ isActive }) =>
-                `flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${isActive ? "bg-white/10 text-white" : "text-stone-400 hover:bg-white/5 hover:text-white"}`
+                `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
+                  isActive ? "bg-sky text-accent-2 font-semibold" : "text-slate-500 hover:bg-paper hover:text-ink"
+                }`
               }
             >
-              <item.icon size={16} />
-              {item.label}
+              {({ isActive }) => (
+                <>
+                  <item.icon size={18} className={isActive ? "text-accent" : "text-slate-400"} />
+                  {item.label}
+                </>
+              )}
             </NavLink>
           ))}
         </nav>
-        <div className="p-4 border-t border-white/10">
+        <div className="m-4 p-3 rounded-2xl bg-paper">
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-accent/30 text-white grid place-items-center text-xs font-semibold">
-              {initials}
-            </div>
+            <div className="h-9 w-9 rounded-full bg-navy text-white grid place-items-center text-xs font-semibold">{initials}</div>
             <div className="min-w-0 flex-1">
-              <div className="text-sm text-white truncate">{user?.name || "Admin"}</div>
-              <div className="text-[11px] text-stone-500 truncate">{user?.email}</div>
+              <div className="text-sm font-semibold text-ink truncate">{user?.name || "Admin"}</div>
+              <div className="text-[11px] text-slate-500 truncate">{user?.email}</div>
             </div>
             <button
-              className="text-stone-500 hover:text-white"
+              className="text-slate-400 hover:text-ink"
               title="Sign out"
               onClick={async () => {
                 await api.logout();
@@ -86,7 +90,7 @@ export function AppShell() {
         </div>
       </aside>
       <main className="flex-1 overflow-auto">
-        <div className="max-w-[1600px] mx-auto px-6 py-8 lg:px-10">
+        <div className="max-w-[1600px] mx-auto px-6 py-8 lg:px-10 lg:py-10">
           <Outlet />
         </div>
       </main>
