@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -39,6 +39,7 @@ process.env.FAILURE_MODE = "fail-open";
 
 const { initDb, closeDb, mailStats } = await import("../src/db/index.js");
 const { startSmtp } = await import("../src/smtp/server.js");
+const alerts = await import("../src/alerts/index.js");
 
 let servers: SMTPServer[] = [];
 
@@ -86,5 +87,31 @@ describe("when Signer cannot hand mail back", () => {
     expect(row.detail).toMatch(/refused the connection\. Check UPSTREAM_HOST and UPSTREAM_PORT/);
     expect(row.detail).toMatch(/Sending it unsigned failed the same way\. Refused with 451/);
     expect(mailStats().failed24h).toBeGreaterThanOrEqual(1);
+  });
+
+  it("alerts administrators through Mailgun's HTTP API, not the SMTP path that is failing", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: string | URL) => {
+      calls.push(String(input));
+      return new Response("{}", { status: 200 });
+    });
+    try {
+      alerts.resetAlertState();
+      alerts.saveAlertSettings({
+        enabled: true,
+        domain: "mg.example.com",
+        region: "us",
+        apiKey: "key",
+        from: "",
+        recipients: ["it-admin@example.com"],
+        intervalMinutes: 15
+      });
+      await expect(send()).rejects.toMatchObject({ responseCode: 451 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(calls).toEqual(["https://api.mailgun.net/v3/mg.example.com/messages"]);
+    } finally {
+      alerts.resetAlertState();
+      vi.unstubAllGlobals();
+    }
   });
 });

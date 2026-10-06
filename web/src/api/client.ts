@@ -109,6 +109,20 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+export type Disclaimer = { id: string; name: string; enabled: number; priority: number; html: string; rules: RuleSet };
+
+export type AlertConfig = {
+  enabled: boolean;
+  domain: string;
+  region: "us" | "eu";
+  from: string;
+  recipients: string[];
+  intervalMinutes: number;
+  apiKeySet: boolean;
+  configured: boolean;
+  last: { at: string; ok: boolean; kind: "problem" | "recovery" | "test"; detail: string } | null;
+};
+
 export type MailLogRow = {
   receivedAt: string;
   sender: string;
@@ -189,8 +203,21 @@ export const api = {
   deleteSignature: (id: string) => request(`/api/signatures/${id}`, { method: "DELETE" }),
   reorder: (ids: string[]) => request("/api/signatures/reorder", { method: "POST", body: JSON.stringify({ ids }) }),
   preview: (id: string, email: string) => request<{ html: string; user: { displayName: string; email: string } }>(`/api/signatures/${id}/preview?email=${encodeURIComponent(email)}`),
-  disclaimers: () => request<Array<{ id: string; name: string; enabled: number; html: string; rules: RuleSet }>>("/api/disclaimers"),
-  saveDisclaimer: (body: object) => request("/api/disclaimers", { method: "POST", body: JSON.stringify(body) }),
+  disclaimers: () => request<Disclaimer[]>("/api/disclaimers"),
+  saveDisclaimer: (body: { id?: string; name: string; html: string; enabled: boolean; rules: RuleSet }) =>
+    request<Disclaimer>("/api/disclaimers", { method: "POST", body: JSON.stringify(body) }),
+  domainNames: () => request<string[]>("/api/domains/names"),
+  alerts: () => request<AlertConfig>("/api/alerts"),
+  saveAlerts: (body: {
+    enabled: boolean;
+    domain: string;
+    region: "us" | "eu";
+    apiKey?: string;
+    from: string;
+    recipients: string;
+    intervalMinutes: number;
+  }) => request<AlertConfig>("/api/alerts", { method: "PUT", body: JSON.stringify(body) }),
+  testAlert: () => request<{ ok: boolean; detail: string }>("/api/alerts/test", { method: "POST", body: "{}" }),
   deleteDisclaimer: (id: string) => request(`/api/disclaimers/${id}`, { method: "DELETE" }),
   campaigns: () => request<Array<{ id: string; name: string; enabled: number; imageUrl: string; href: string; alt: string; rules: RuleSet }>>("/api/campaigns"),
   saveCampaign: (body: object) => request("/api/campaigns", { method: "POST", body: JSON.stringify(body) }),

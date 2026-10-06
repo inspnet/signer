@@ -7,7 +7,7 @@ import { HomePage } from "./pages/HomePage";
 import { SignaturesPage } from "./pages/SignaturesPage";
 import { DesignerPage } from "./pages/DesignerPage";
 import { RulesPage } from "./pages/RulesPage";
-import { DisclaimersPage } from "./pages/DisclaimersPage";
+import { DisclaimerEditPage, DisclaimersPage } from "./pages/DisclaimersPage";
 import { CampaignsPage } from "./pages/CampaignsPage";
 import { TesterPage } from "./pages/TesterPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
@@ -46,6 +46,7 @@ export default function App() {
           <Route path="signatures" element={<SignaturesPage />} />
           <Route path="signatures/:id/rules" element={<RulesPage />} />
           <Route path="disclaimers" element={<DisclaimersPage />} />
+          <Route path="disclaimers/:id" element={<DisclaimerEditPage />} />
           <Route path="campaigns" element={<CampaignsPage />} />
           <Route path="tester" element={<TesterPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />

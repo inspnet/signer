@@ -52,6 +52,7 @@ import { perDomainMx, returnRouteFor } from "../smtp/route.js";
 import { detectPublicIPv4 } from "../system/publicip.js";
 import { diagnoseRelay } from "../smtp/diagnose.js";
 import { describeFailure } from "../smtp/explain.js";
+import { alertSettings, alertsConfigured, lastAlert, saveAlertSettings, sendTestAlert } from "../alerts/index.js";
 import {
   checkForUpdates,
   currentVersion,
@@ -453,6 +454,14 @@ export function registerApi(app: FastifyInstance): void {
     };
   });
 
+  // Names only, for the rule editors: anyone who edits signatures or disclaimers can target a domain.
+  app.get("/api/domains/names", async (req, reply) => {
+    if (!requireUser(req, reply)) return;
+    return listDomains()
+      .sort((a, b) => Number(b.primary) - Number(a.primary) || a.name.localeCompare(b.name))
+      .map((d) => d.name);
+  });
+
   app.post("/api/domains", async (req, reply) => {
     const user = requireRole(["admin"], req, reply);
     if (!user) return;
@@ -686,6 +695,80 @@ export function registerApi(app: FastifyInstance): void {
         externalRecipient: external || undefined
       });
       audit(admin.email, "relay_diagnostic", domain, result.ok ? "passed" : (result.steps.find((s) => s.status === "fail")?.step ?? "failed"));
+      return result;
+    }
+  );
+
+  // Alerts for deferred or unsigned mail, sent through Mailgun's HTTP API.
+  const alertView = () => {
+    const { apiKey, ...rest } = alertSettings();
+    return { ...rest, apiKeySet: Boolean(apiKey), configured: alertsConfigured(), last: lastAlert() };
+  };
+
+  app.get("/api/alerts", async (req, reply) => {
+    if (!requireRole(["admin"], req, reply)) return;
+    return alertView();
+  });
+
+  app.put("/api/alerts", async (req, reply) => {
+    const admin = requireRole(["admin"], req, reply);
+    if (!admin) return;
+    const body = (req.body ?? {}) as {
+      enabled?: boolean;
+      domain?: string;
+      region?: string;
+      apiKey?: string;
+      from?: string;
+      recipients?: string[] | string;
+      intervalMinutes?: number;
+    };
+    const current = alertSettings();
+    const domain = String(body.domain ?? current.domain).trim().toLowerCase();
+    if (domain && !/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)) {
+      return reply.code(400).send({ error: "The Mailgun domain must be a domain name, such as mg.example.com." });
+    }
+    const list = Array.isArray(body.recipients) ? body.recipients : String(body.recipients ?? current.recipients.join(",")).split(/[\s,;]+/);
+    const recipients = [...new Set(list.map((r) => String(r).trim().toLowerCase()).filter(Boolean))];
+    const bad = recipients.filter((r) => !EMAIL.test(r));
+    if (bad.length) return reply.code(400).send({ error: `Not an email address: ${bad.join(", ")}` });
+    if (recipients.length > 20) return reply.code(400).send({ error: "At most 20 alert recipients." });
+    const from = String(body.from ?? current.from).trim();
+    if (from && !/<[^@\s<>]+@[^@\s<>]+>$|^[^@\s<>]+@[^@\s<>]+$/.test(from)) {
+      return reply.code(400).send({ error: "From must be an address, or a name and <address>." });
+    }
+    const interval = Number(body.intervalMinutes ?? current.intervalMinutes);
+    if (!Number.isInteger(interval) || interval < 5 || interval > 1440) {
+      return reply.code(400).send({ error: "The alert interval must be between 5 and 1440 minutes." });
+    }
+    // The key is never sent back to the browser; leaving the field empty keeps it.
+    const apiKey = typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey.trim() : current.apiKey;
+    const next = {
+      enabled: body.enabled ?? current.enabled,
+      domain,
+      region: body.region === "eu" ? ("eu" as const) : body.region === "us" ? ("us" as const) : current.region,
+      apiKey,
+      from,
+      recipients,
+      intervalMinutes: interval
+    };
+    if (next.enabled && !alertsConfigured(next)) {
+      return reply.code(400).send({ error: "Alerts need a Mailgun domain, an API key and at least one recipient." });
+    }
+    saveAlertSettings(next);
+    audit(admin.email, "update_alerts", domain, next.enabled ? "on" : "off");
+    return alertView();
+  });
+
+  app.post(
+    "/api/alerts/test",
+    { config: { rateLimit: { max: 10, timeWindow: 10 * 60 * 1000 } } },
+    async (req, reply) => {
+      const admin = requireRole(["admin"], req, reply);
+      if (!admin) return;
+      if (!alertsConfigured()) return reply.code(400).send({ error: "Save a Mailgun domain, an API key and a recipient first." });
+      const result = await sendTestAlert();
+      audit(admin.email, "test_alert", "", result.ok ? "sent" : "failed");
+      if (!result.ok) return reply.code(502).send({ error: result.detail });
       return result;
     }
   );

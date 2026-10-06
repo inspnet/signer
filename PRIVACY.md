@@ -54,8 +54,9 @@ stored on the server.
   provider.
 - Only people your administrators grant access to can sign in to the portal.
   Signing in goes through your own Microsoft or Google accounts.
-- **Signer sends no data to its authors or to any third-party service.** It has
-  no telemetry, analytics or usage reporting.
+- **Signer sends no data to its authors or to any third-party service**, except
+  Mailgun when an administrator turns on alerts (below). It has no telemetry,
+  analytics or usage reporting.
 
 The server makes outbound connections only for these purposes:
 
@@ -66,6 +67,7 @@ The server makes outbound connections only for these purposes:
 | DNS | Looking up the mail server ranges Microsoft and Google publish, and your own domains' MX records to return signed mail | No personal data |
 | Let's Encrypt | Issuing and renewing the HTTPS certificate | The server's hostname, and the super admin's email address as the account contact for expiry notices |
 | GitHub | Checking for and downloading updates, when an administrator uses **Settings → Updates** or the install script runs | No personal data: which version is installed, and requests for newer code |
+| Mailgun, only if an administrator turns on **Settings → Alerts** | Emailing administrators when messages are deferred or delivered unsigned | The alert email: how many messages, the senders' **domains**, and the failure reasons with email addresses replaced by `[address]`, sent to the recipients the administrator chose. Mailgun keeps sent messages and their logs under its own retention policy |
 | npm, NodeSource, Ubuntu mirrors | Installing and updating the software (and Ubuntu's automatic security updates) | No personal data |
 
 Two outside services are contacted by browsers and mail clients, not by the
