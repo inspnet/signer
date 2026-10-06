@@ -74,7 +74,7 @@ The script installs and configures:
 - **Data** (SQLite database, uploads, IP range cache) in `/var/lib/signer`, with a nightly backup kept for 14 days.
 - **The firewall** (ufw): 22, 80, 443, 25 and 587 open, everything else closed.
 - **Log retention**: the system journal, which holds Signer's request log, keeps 14 days ([PRIVACY.md](PRIVACY.md)).
-- **The updater** behind the portal's **Mail flow → Updates** tab, so an owner can install new versions from the browser.
+- **The updater** behind the portal's **Settings → Updates** tab, so an owner can install new versions from the browser.
 - Automatic Ubuntu security updates, and swap on small servers so builds don't run out of memory.
 
 Running the same script again also **updates** Signer, and keeps your configuration. See [Updating an existing install](#updating-an-existing-install).
@@ -214,7 +214,7 @@ It asks for:
 | Super admin's email | `it-admin@clientdomain.com` (also the Let's Encrypt contact) |
 | Primary email domain | `clientdomain.com` (defaults to the super admin's domain; add others later in the portal) |
 | Mail provider | `microsoft` or `google` |
-| Microsoft: tenant MX host | `clientdomain-com.mail.protection.outlook.com` |
+| Microsoft: tenant MX host | `clientdomain-com.mail.protection.outlook.com`, the primary domain's MX. Other domains are found automatically ([details](#where-signed-mail-goes-back)) |
 | Google: SMTP relay host | `smtp-relay.gmail.com` (the default) |
 | Entra tenant ID, client ID and secret, or Google OAuth client ID and secret | From [step 5](#5-create-the-sign-in-app). The script prints the redirect URI and permissions again here. Press Enter to skip and add them later |
 
@@ -259,15 +259,15 @@ systemctl list-timers signer-backup.timer certbot.timer
 
 Then sign in at `https://signer.example.com` as the super admin and:
 
-1. **Mail flow → Domains**: check the primary domain, and add the tenant's other email domains. The **Found in the directory** list offers any your staff use that are missing.
-2. **Mail flow → Directory → Synchronise**.
-3. Build a signature and try it in the **Rule tester** before connecting mail flow.
+1. **Settings → Domains**: check the primary domain, and add the tenant's other email domains. The **Found in the directory** list offers any your staff use that are missing.
+2. **Settings → Directory → Synchronise**. After that it syncs every hour. The same tab lists everyone, with search, and lets admins fill in the fields the directory does not supply (pronouns, social links, working hours, custom fields).
+3. Build a signature, try it in the **Rule Tester**, and use **Send test** to see it in your own mailbox before connecting mail flow.
 
 ---
 
 ### Connect Microsoft 365
 
-**Mail flow → Connectors** in the portal shows these commands with your hostname and header filled in. Run them in Exchange Online PowerShell (`Connect-ExchangeOnline`):
+**Settings → Connectors** in the portal shows these commands with your hostname and header filled in. Run them in Exchange Online PowerShell (`Connect-ExchangeOnline`):
 
 ```powershell
 $smartHost = "signer.example.com"            # SMTP_HOSTNAME
@@ -287,12 +287,29 @@ New-InboundConnector -Name "Signer receive" -ConnectorType OnPremises -SenderDom
   -SenderIPAddresses $signerIp -RequireTls $true -CloudServicesMailEnabled $true -Enabled $true
 
 # Send in-organisation mail to Signer unless it has already been processed.
+# Created DISABLED, so nothing goes through Signer until you turn it on.
 New-TransportRule -Name "Identify messages to send to Signer" `
   -FromScope InOrganization `
   -ExceptIfHeaderContainsMessageHeader $header `
   -ExceptIfHeaderContainsWords "true" `
-  -RouteMessageOutboundConnector "Signer send"
+  -RouteMessageOutboundConnector "Signer send" `
+  -Enabled $false
 ```
+
+Then go live in two steps:
+
+```powershell
+# 1. Pilot: enable the rule for one mailbox only.
+Set-TransportRule -Identity "Identify messages to send to Signer" -From "pilot.user@clientdomain.com" -Enabled $true
+
+# 2. Go live: remove the pilot condition so every sender goes through Signer.
+Set-TransportRule -Identity "Identify messages to send to Signer" -From $null
+
+# Roll back at any time; mail stops going through Signer straight away.
+Disable-TransportRule -Identity "Identify messages to send to Signer" -Confirm:$false
+```
+
+During the pilot, have that person send to an external address and to a colleague. Check **Activity** in the portal and `journalctl -u signer`, and look at the received messages. **Rule Tester → Send test to me** shows a signature in a real mailbox even before the rule is enabled.
 
 Notes:
 
@@ -301,8 +318,8 @@ Notes:
 - **Do not add `-RestrictDomainsToIPAddresses` or `-RestrictDomainsToCertificate`.** With `-SenderDomains *`, either one tells Exchange to reject every message to the tenant that does not come from Signer, which includes all normal inbound mail.
 - `-CloudServicesMailEnabled` keeps Exchange's internal headers on the round trip, so the returned message is still treated as sent by the organisation, and internal mail stays internal. It is the same setting commercial signature services use.
 - The transport rule only diverts in-organisation senders whose mail lacks the processed header, which is what prevents loops.
-- **Create the transport rule last**, after the health check, STARTTLS check and outbound SMTP all pass. Until the rule exists, no mail goes through Signer.
-- Test with one mailbox first: add `-From user@clientdomain.com` to the transport rule, send to an external address, and check **Activity** in the portal and `journalctl -u signer`. Then remove the condition.
+- **Only enable the rule** after the health check, STARTTLS check and outbound SMTP all pass. While it is disabled, no mail goes through Signer.
+- **Every domain in the tenant is covered.** The connectors and rule are tenant-wide, and Signer returns each domain's mail to that domain's own Microsoft 365 endpoint ([Where signed mail goes back](#where-signed-mail-goes-back)).
 
 ### Connect Google Workspace
 
@@ -320,7 +337,7 @@ In [admin.google.com](https://admin.google.com) → Apps → Google Workspace �
 
 There are two ways. Both keep `/etc/signer/signer.env` and all data. Files in `/opt/signer` are replaced on every update, so keep configuration in `/etc/signer/signer.env`. A restart drops SMTP connections in progress; Microsoft and Google retry them.
 
-**From the portal (code only).** An owner opens **Mail flow → Updates**, presses **Check for updates** to see what changed, then **Install update**. The new version is built while the old one keeps running, then Signer restarts. If the build fails, nothing changes. If the new version does not start, Signer goes back to the previous version on its own. The tab shows progress and the updater's log.
+**From the portal (code only).** An owner opens **Settings → Updates**, presses **Check for updates** to see what changed, then **Install update**. The new version is built while the old one keeps running, then Signer restarts. If the build fails, nothing changes. If the new version does not start, Signer goes back to the previous version on its own. The tab shows progress and the updater's log.
 
 **From the server (code and server setup).** SSH in as root and run the same two commands as a new install:
 
@@ -378,7 +395,7 @@ How the portal updater stays safe:
 - **Super admin cannot sign in** → the mailbox must match `SUPER_ADMIN_EMAIL` (case-insensitive).
 - **Connector loop** → the transport rule or content compliance rule must skip mail whose processed header is `true`.
 - **Directory sync says `Authorization_RequestDenied` / "Insufficient privileges"** → the Entra app has the sync permissions as **Delegated**, or without admin consent. Add `User.Read.All`, `Group.Read.All` and `GroupMember.Read.All` as **Application** permissions on the same app and grant admin consent ([step 5](#5-create-the-sign-in-app)).
-- **A sender gets no signature, and Activity says the domain is not one of this organisation's domains** → add the domain under **Mail flow → Domains**.
+- **A sender gets no signature, and Activity says the domain is not one of this organisation's domains** → add the domain under **Settings → Domains**.
 - **A portal update fails or rolls back** → the **Updates** tab shows the updater's log (also `/var/lib/signer/update/last.log`). Signer keeps running the previous version. Re-running the install script from the server is always safe.
 - **Empty signature fields** → run directory sync. Users only exist in the cache after an Entra/Google sync (or the demo seed).
 - **Logo upload rejected with 415** → only PNG, JPEG, GIF and WEBP are accepted, judged by file contents, not extension. SVG is refused deliberately: email clients do not render it (see [Portal hardening](#portal-hardening)).
@@ -403,10 +420,11 @@ docker compose logs -f --tail=80
 - **Rules** — senders, exceptions, groups/domains, internal vs external recipients, date/time with a per-rule timezone, reply/thread advanced rules
 - **Disclaimers** — separate legal notices (e.g. external-only confidentiality)
 - **Campaigns** — banner images with the same rule engine
-- **Rule tester** — dry-run with per-rule pass/fail (does not send mail)
+- **Rule Tester** — dry-run with per-rule pass/fail, plus **Send test**, which emails the result to your own mailbox
 - **User details** — employees edit only admin-unlocked fields
 - **RBAC** — owner / admin / editor / designer / user. Admins manage roles, but only `SUPER_ADMIN_EMAIL` can grant `owner`
 - **Uploads** — PNG, JPEG, GIF and WEBP artwork, validated by file contents rather than extension
+- **Directory** — everyone synced from Entra or Google, searchable. Admins fill in the fields the directory does not supply; directory fields stay read-only so Entra/Google remain the source of truth. Syncs hourly
 - **Domains** — every email domain in the tenant, managed in the portal; decides who is signed and who is internal ([Domains](#domains))
 - **Updates** — check GitHub for new versions and install them from the portal, with automatic rollback ([Updating](#updating-an-existing-install))
 - **Analytics** — counts and a 30-day activity log of senders and recipients; message content is never stored ([PRIVACY.md](PRIVACY.md))
@@ -452,7 +470,9 @@ See `.env.example` for the full list with comments. The keys that matter most:
 | `SMTP_RANGE_REFRESH_MINUTES` | `720` | How often provider ranges are re-resolved; `0` disables |
 | `SMTP_HOSTNAME` | `signer.local` | Name in the SMTP banner; must match the TLS certificate |
 | `TLS_CERT_PATH` / `TLS_KEY_PATH` | — | Certificate for SMTP STARTTLS. Required for Microsoft 365. If set, both must be readable or startup fails |
-| `UPSTREAM_HOST` / `UPSTREAM_PORT` | — / `25` | Where signed mail is handed back |
+| `UPSTREAM_HOST` / `UPSTREAM_PORT` | — / `25` | Where signed mail is handed back: the setup domain's MX, and the fallback for every other domain |
+| `UPSTREAM_ROUTING` | `auto` | `auto` returns each Microsoft 365 domain's mail to its own MX; `fixed` always uses `UPSTREAM_HOST` ([details](#where-signed-mail-goes-back)) |
+| `DIRECTORY_SYNC_MINUTES` | `60` | How often Entra/Google directory sync runs; `0` turns the timer off. A sync also runs a minute after start |
 | `UPSTREAM_TLS_REJECT_UNAUTHORIZED` | `true` | Verify the upstream certificate. Only turn off for a lab host with a self-signed cert |
 | `PROCESSED_HEADER` | `X-Signer-MessageProcessed` | Must match the connector rule that skips already-processed mail |
 | `FAILURE_MODE` | `fail-open` | `fail-open` delivers unsigned if processing throws; `fail-closed` defers with 4xx. Either way, mail that cannot be handed back is deferred, never dropped |
@@ -486,7 +506,7 @@ will bite later.
 
 ## Domains
 
-One Signer serves one Microsoft 365 or Google Workspace tenant, and a tenant often owns several email domains: a main brand, a subsidiary, a legacy name. **Mail flow → Domains** in the portal lists them.
+One Signer serves one Microsoft 365 or Google Workspace tenant, and a tenant often owns several email domains: a main brand, a subsidiary, a legacy name. **Settings → Domains** in the portal lists them.
 
 The list controls two things:
 
@@ -498,9 +518,20 @@ How it is managed:
 - The installer sets the **primary domain** (`PRIMARY_DOMAIN`, defaulting to the super admin's domain). The primary domain cannot be removed until another domain is made primary.
 - Admins add and remove the other domains in the portal. **Found in the directory** lists domains your synced staff use that are not yet on the list.
 - Nothing changes in Exchange or Google when you add a domain. The transport rule and content compliance rule already cover every domain in the tenant.
+- The directory syncs **every hour** (`DIRECTORY_SYNC_MINUTES`, default 60) and a minute after Signer starts; **Settings → Directory → Synchronise** runs it on demand.
 - Entra **guest** accounts are skipped during directory sync. They carry a partner's address, and used to make that partner's domain look internal.
 
 `PRIMARY_DOMAIN` only seeds the list the first time Signer starts. After that, the portal is the source of truth.
+
+### Where signed mail goes back
+
+Each domain in a Microsoft 365 tenant has its own Exchange Online endpoint, published as its MX record (`contoso-com.mail.protection.outlook.com`, `fabrikam-com.mail.protection.outlook.com`, …). Signer hands each signed message back to the endpoint for the **sender's** domain:
+
+1. A **return host** an admin set for that domain under **Settings → Domains**, if any.
+2. Otherwise the domain's **MX record**, looked up live and cached for 10 minutes. It is only used if it is a `*.mail.protection.outlook.com` host. A domain whose MX points at a filtering service (Mimecast, Proofpoint, …) must not have outbound mail handed to that service as if it were inbound.
+3. Otherwise `UPSTREAM_HOST`, the MX entered at setup. This also covers senders outside the domain list and any DNS failure, so a lookup problem never fails a message.
+
+**Settings → Domains** shows each domain's route and the reason for it. `UPSTREAM_ROUTING=fixed` sends everything to `UPSTREAM_HOST` instead. Google Workspace always returns mail through `smtp-relay.gmail.com`, because a Google MX is the inbound server, not a relay, so per-domain routing applies to Microsoft 365 only.
 
 ## Provider IP ranges
 

@@ -9,7 +9,7 @@
 # The first run asks a few questions and sets everything up: packages,
 # Node.js, the Signer service, Nginx with a Let's Encrypt certificate, the
 # firewall, nightly backups, log retention, and the updater the portal uses
-# (Mail flow → Updates). Run the same two commands again at any time to update
+# (Settings → Updates). Run the same two commands again at any time to update
 # Signer and its server setup; later runs keep your configuration.
 #
 # Answers can also be supplied as environment variables for an unattended
@@ -132,7 +132,7 @@ main() {
     DOMAIN="${DOMAIN,,}"
     ask ADMIN_EMAIL "Super admin's email (signs in to the portal; also used for Let's Encrypt)"
     [[ "$ADMIN_EMAIL" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || die "'${ADMIN_EMAIL}' is not an email address."
-    note "The tenant's main email domain. Add its other domains later in the portal (Mail flow → Domains)."
+    note "The tenant's main email domain. Add its other domains later in the portal (Settings → Domains)."
     ask PRIMARY_DOMAIN "Primary email domain" "${ADMIN_EMAIL##*@}"
     PRIMARY_DOMAIN="${PRIMARY_DOMAIN,,}"
     PRIMARY_DOMAIN="${PRIMARY_DOMAIN#@}"
@@ -146,7 +146,8 @@ main() {
       *) die "Mail provider must be microsoft or google." ;;
     esac
     if [ "$PROVIDER" = microsoft ]; then
-      note "Signed mail goes back to the tenant's MX host: Microsoft 365 admin → Settings → Domains → MX record."
+      note "Signed mail goes back to each domain's own Microsoft 365 MX, found automatically. Enter the primary"
+      note "domain's MX as the fallback: Microsoft 365 admin → Settings → Domains → the domain → MX record."
       ask UPSTREAM_HOST "Tenant MX host, e.g. contoso-com.mail.protection.outlook.com"
       [[ "$UPSTREAM_HOST" == *.mail.protection.outlook.com ]] ||
         warn "${UPSTREAM_HOST} does not end in .mail.protection.outlook.com. Check it before routing mail."
@@ -273,6 +274,11 @@ main() {
     note "Wrote ${ENV_FILE} (readable by root and ${SVC_USER} only)."
   else
     [ -n "$(env_get SESSION_SECRET)" ] || env_set SESSION_SECRET "$(openssl rand -base64 48 | tr -d '\n')"
+    # Directory sync used to default to every 4 hours; move untouched installs to hourly.
+    if [ "$(env_get DIRECTORY_SYNC_MINUTES)" = "240" ]; then
+      env_set DIRECTORY_SYNC_MINUTES 60
+      note "Directory sync now runs hourly (DIRECTORY_SYNC_MINUTES 240 → 60)."
+    fi
     chown root:"$SVC_USER" "$ENV_FILE"
     chmod 640 "$ENV_FILE"
     note "Kept ${ENV_FILE}."
@@ -372,7 +378,7 @@ Stop it (for Postfix: systemctl disable --now postfix) and re-run."
     Public IPv6:   ${ipv6:-none}
     Config:        ${ENV_FILE}   (edit, then: systemctl restart signer)
     Logs:          journalctl -u signer -f
-    Update:        portal → Mail flow → Updates (code only), or run the
+    Update:        portal → Settings → Updates (code only), or run the
                    two install commands again (code and server setup)
 
     Next steps (README → Deploy):
@@ -574,7 +580,7 @@ EOF
     echo "NPM_CACHE=${NPM_CACHE}"
     cat << 'UPDATER'
 # Started by signer-update.path when an owner presses "Install update" in the
-# portal (Mail flow → Updates). Runs as root but never executes anything from
+# portal (Settings → Updates). Runs as root but never executes anything from
 # the checkout as root: git and npm run as the service user. Installs the
 # latest commit of the branch already checked out, restarts Signer, and rolls
 # back if the new version fails to build or does not come up.

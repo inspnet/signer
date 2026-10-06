@@ -274,6 +274,44 @@ export function evaluateMessage(ctx: RuleContext, bodyPreview: string): TestResu
   };
 }
 
+/**
+ * A real email showing what `testedTo` would receive from `from`, addressed to
+ * `deliverTo` (the person running the test). It carries the processed header,
+ * so the provider's routing rule does not send it back through Signer.
+ */
+export async function composeTestMessage(input: {
+  from: string;
+  testedTo: string;
+  deliverTo: string;
+  subject?: string;
+  body?: string;
+}): Promise<{ raw: Buffer; result: TestResult }> {
+  const result = testSignature({ from: input.from, to: input.testedTo, subject: input.subject, body: input.body });
+  const applied = result.signature
+    ? `with the signature "${escapeHtml(result.signature.name)}"`
+    : "with no signature, because no signature rule matched";
+  const notice =
+    `<p style="font:12px Arial,sans-serif;color:#57534e;background:#f4f1ea;padding:8px 10px;border-radius:6px;margin:0 0 16px">` +
+    `Signer test: this is the message ${escapeHtml(input.testedTo)} would receive from ${escapeHtml(input.from)}, ${applied}.</p>`;
+  const html = notice + result.htmlPreview;
+  const { default: MailComposer } = await import("nodemailer/lib/mail-composer/index.js");
+  const composer = new MailComposer({
+    from: input.from,
+    to: input.deliverTo,
+    subject: `[Signer test] ${(input.subject || "Test").slice(0, 200)}`,
+    html,
+    text: convert(html),
+    headers: [
+      { key: config.processedHeader, value: "true" },
+      { key: "X-Signer-Test", value: "true" }
+    ]
+  });
+  const raw = await new Promise<Buffer>((resolve, reject) => {
+    composer.compile().build((err: Error | null, message: Buffer) => (err ? reject(err) : resolve(message)));
+  });
+  return { raw, result };
+}
+
 export function testSignature(input: TestInput): TestResult {
   const body = input.body || "Hello, this is a test message.";
   const ctx = buildContext({

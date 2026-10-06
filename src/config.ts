@@ -59,7 +59,7 @@ export const config = {
   allowDevLogin: envBool("AUTH_ALLOW_DEV_LOGIN", false),
   processedHeader: env("PROCESSED_HEADER", "X-Signer-MessageProcessed"),
   failureMode: env("FAILURE_MODE", "fail-open") as "fail-open" | "fail-closed",
-  directorySyncMinutes: envInt("DIRECTORY_SYNC_MINUTES", 240),
+  directorySyncMinutes: envInt("DIRECTORY_SYNC_MINUTES", 60),
   retention: {
     /** Days to keep the per-message activity log (sender, recipients, outcome). 0 keeps it forever. */
     mailLogDays: envInt("MAIL_LOG_RETENTION_DAYS", 30),
@@ -93,7 +93,12 @@ export const config = {
     user: env("UPSTREAM_USER"),
     pass: env("UPSTREAM_PASS"),
     tlsServername: env("UPSTREAM_TLS_SERVERNAME"),
-    tlsRejectUnauthorized: envBool("UPSTREAM_TLS_REJECT_UNAUTHORIZED", true)
+    tlsRejectUnauthorized: envBool("UPSTREAM_TLS_REJECT_UNAUTHORIZED", true),
+    /**
+     * auto: when the upstream is Microsoft 365, return each sender domain's mail
+     * to that domain's own MX. fixed: always UPSTREAM_HOST.
+     */
+    routing: (env("UPSTREAM_ROUTING", "auto").toLowerCase() === "fixed" ? "fixed" : "auto") as "auto" | "fixed"
   },
   entra: {
     tenantId: env("ENTRA_TENANT_ID"),

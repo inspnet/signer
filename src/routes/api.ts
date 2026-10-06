@@ -36,6 +36,8 @@ import {
   listDomains,
   removeDomain,
   setPrimaryDomain,
+  setDomainReturnHost,
+  domainNames,
   getDb,
   type Role,
   type RuleSet,
@@ -44,7 +46,9 @@ import {
 import { DIRECTORY_FIELDS } from "../directory/fields.js";
 import { syncDirectory } from "../directory/sync.js";
 import { getRangeStatus } from "../smtp/ipranges.js";
-import { signatureHtml, testSignature } from "../mail/process.js";
+import { composeTestMessage, signatureHtml, testSignature } from "../mail/process.js";
+import { relayUpstream } from "../smtp/server.js";
+import { perDomainMx, returnRouteFor } from "../smtp/route.js";
 import {
   checkForUpdates,
   currentVersion,
@@ -55,6 +59,8 @@ import {
 } from "../system/update.js";
 import { defaultProfessionalDesign } from "../mail/templates.js";
 import type { Design } from "../mail/design.js";
+
+const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 /** Roles an admin may hand out through /api/admins. */
 const ASSIGNABLE_ROLES: Role[] = ["owner", "admin", "editor", "designer", "user"];
@@ -270,6 +276,65 @@ export function registerApi(app: FastifyInstance): void {
     return testSignature({ from: body.from, to: body.to, subject: body.subject, body: body.body });
   });
 
+  // Send the tester's result as a real email, to the person running the test
+  // only: anything wider would let the portal send mail as any colleague.
+  app.post(
+    "/api/tester/send",
+    { config: { rateLimit: { max: 10, timeWindow: 10 * 60 * 1000 } } },
+    async (req, reply) => {
+      const user = requireRole(["admin", "editor", "designer"], req, reply);
+      if (!user) return;
+      const body = (req.body ?? {}) as { from?: string; to?: string; subject?: string; body?: string };
+      const from = String(body.from ?? "").trim().toLowerCase();
+      const to = String(body.to ?? "").trim().toLowerCase();
+      if (!EMAIL.test(from) || !EMAIL.test(to)) return reply.code(400).send({ error: "From and To must be email addresses." });
+      const listed = domainNames();
+      if (listed.length && !listed.includes(from.split("@")[1]!)) {
+        return reply.code(400).send({ error: "Send tests from an address on one of your domains (Settings → Domains)." });
+      }
+      if (!config.upstream.host) {
+        return reply.code(409).send({ error: "UPSTREAM_HOST is not set, so there is nowhere to send the test." });
+      }
+      const { raw, result } = await composeTestMessage({
+        from,
+        testedTo: to,
+        deliverTo: user.email,
+        subject: body.subject,
+        body: body.body
+      });
+      try {
+        await relayUpstream(raw, from, [user.email]);
+      } catch (err) {
+        return reply.code(502).send({
+          error: `Could not hand the test to ${config.upstream.host}: ${err instanceof Error ? err.message : String(err)}`
+        });
+      }
+      audit(user.email, "send_test", from, `as received by ${to}`);
+      return { ok: true, sentTo: user.email, signature: result.signature?.name ?? null };
+    }
+  );
+
+  // Admins look people up and fill in the fields the directory does not supply.
+  app.put("/api/directory/users/:email", async (req, reply) => {
+    const admin = requireRole(["admin"], req, reply);
+    if (!admin) return;
+    const { email } = req.params as { email: string };
+    if (!getUserByEmail(email)) return reply.code(404).send({ error: "No such person in the directory cache." });
+    const editable = new Set<string>(DIRECTORY_FIELDS.filter((f) => !f.directory).map((f) => f.key));
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const refused = Object.keys(body).filter((key) => !editable.has(key));
+    if (refused.length) {
+      return reply.code(400).send({
+        error: `${refused.join(", ")} come${refused.length === 1 ? "s" : ""} from Entra or Google; change ${refused.length === 1 ? "it" : "them"} there.`
+      });
+    }
+    const overrides: Record<string, string> = {};
+    for (const [key, value] of Object.entries(body)) overrides[key] = String(value ?? "").slice(0, 255);
+    setUserOverrides(email, overrides);
+    audit(admin.email, "update_user_details", email.toLowerCase(), Object.keys(overrides).join(","));
+    return getUserByEmail(email);
+  });
+
   app.get("/api/users", async (req, reply) => {
     if (!requireUser(req, reply)) return;
     return listUsers();
@@ -375,7 +440,14 @@ export function registerApi(app: FastifyInstance): void {
         )
         .all() as { domain: string; people: number }[]
     ).filter((s) => !listed.has(s.domain));
-    return { domains, suggestions };
+    // Where each domain's signed mail goes back to, and why.
+    const routes = await Promise.all(domains.map((d) => returnRouteFor(`postmaster@${d.name}`)));
+    return {
+      domains: domains.map((d, i) => ({ ...d, route: routes[i] })),
+      suggestions,
+      perDomainMx: perDomainMx(),
+      upstreamHost: config.upstream.host
+    };
   });
 
   app.post("/api/domains", async (req, reply) => {
@@ -400,6 +472,21 @@ export function registerApi(app: FastifyInstance): void {
       removeDomain(name);
       audit(user.email, "remove_domain", name);
       return { ok: true };
+    } catch (err) {
+      if (err instanceof DomainError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  app.put("/api/domains/:name/return-host", async (req, reply) => {
+    const user = requireRole(["admin"], req, reply);
+    if (!user) return;
+    const { name } = req.params as { name: string };
+    const host = String(((req.body ?? {}) as { host?: string }).host ?? "");
+    try {
+      setDomainReturnHost(name, host);
+      audit(user.email, "set_domain_return_host", name, host || "(automatic)");
+      return { ok: true, route: await returnRouteFor(`postmaster@${name}`) };
     } catch (err) {
       if (err instanceof DomainError) return reply.code(400).send({ error: err.message });
       throw err;
@@ -511,7 +598,9 @@ export function registerApi(app: FastifyInstance): void {
           exceptIfHeader: header,
           exceptIfValue: "true",
           action: "Redirect the message to the Signer send connector",
-          scope: "Sender is inside the organization"
+          scope: "Sender is inside the organization",
+          // Created disabled: pilot it on one mailbox before every sender goes through Signer.
+          enabled: false
         },
         powershell: [
           `$smartHost = "${host}"`,
@@ -522,7 +611,17 @@ export function registerApi(app: FastifyInstance): void {
           ``,
           `New-InboundConnector -Name "Signer receive" -ConnectorType OnPremises -SenderDomains * -SenderIPAddresses $signerIp -RequireTls $true -CloudServicesMailEnabled $true -Enabled $true`,
           ``,
-          `New-TransportRule -Name "Identify messages to send to Signer" -FromScope InOrganization -ExceptIfHeaderContainsMessageHeader $header -ExceptIfHeaderContainsWords "true" -RouteMessageOutboundConnector "Signer send"`
+          `# Created disabled, so no mail goes through Signer yet.`,
+          `New-TransportRule -Name "Identify messages to send to Signer" -FromScope InOrganization -ExceptIfHeaderContainsMessageHeader $header -ExceptIfHeaderContainsWords "true" -RouteMessageOutboundConnector "Signer send" -Enabled $false`,
+          ``,
+          `# Pilot: turn it on for one mailbox only.`,
+          `Set-TransportRule -Identity "Identify messages to send to Signer" -From "pilot.user@yourdomain.com" -Enabled $true`,
+          ``,
+          `# Go live: remove the pilot condition so it applies to every sender.`,
+          `Set-TransportRule -Identity "Identify messages to send to Signer" -From $null`,
+          ``,
+          `# Roll back at any time: mail stops going through Signer straight away.`,
+          `Disable-TransportRule -Identity "Identify messages to send to Signer" -Confirm:$false`
         ].join("\n")
       },
       google: {
@@ -545,7 +644,7 @@ export function registerApi(app: FastifyInstance): void {
         "Mail is processed on this server and returned to Microsoft 365 or Google — it is not sent to a third-party SaaS.",
         "Users cannot remove the signature: it is applied after Send on the server, for every client including iOS Mail.",
         "This server must be able to connect out on port 25 (Microsoft 365) or 587 (Google). Many hosting providers, Linode included, block those ports on new accounts until you ask support to lift the restriction.",
-        "Set UPSTREAM_HOST to your tenant's mail.protection.outlook.com hostname (Microsoft) or smtp-relay.gmail.com (Google)."
+        "Signed mail returns to each sending domain's own mail.protection.outlook.com endpoint (its MX) for Microsoft 365, or through smtp-relay.gmail.com for Google. Settings → Domains shows the route for each domain; UPSTREAM_HOST is the fallback."
       ]
     };
   });

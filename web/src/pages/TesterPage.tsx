@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
+import { useAuth } from "../layouts/Auth";
 
 type Result = {
   signature: { id: string; name: string; html: string } | null;
@@ -17,19 +18,22 @@ type Result = {
 };
 
 export function TesterPage() {
-  const [from, setFrom] = useState("scott@inspired.co");
+  const { user } = useAuth();
+  const [from, setFrom] = useState(user?.email ?? "");
   const [to, setTo] = useState("ada@contoso.com");
   const [subject, setSubject] = useState("Project update");
   const [body, setBody] = useState("Hello, please see the attached update.");
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState("");
+  const [sendState, setSendState] = useState<{ busy: boolean; message: string; ok: boolean }>({ busy: false, message: "", ok: true });
+  const canSend = user && ["super_admin", "owner", "admin", "editor", "designer"].includes(user.role);
 
   return (
     <div>
       <PageHeader
         kicker="Lab"
-        title="Rule tester"
-        description="Simulates server-side evaluation in signature order. This does not send mail."
+        title="Rule Tester"
+        description="Simulates server-side evaluation in signature order. Send test emails the result to your own mailbox."
       />
       <div className="mt-8 grid lg:grid-cols-2 gap-6">
         <form
@@ -60,8 +64,42 @@ export function TesterPage() {
             Body
             <textarea className="input mt-1 h-28" value={body} onChange={(e) => setBody(e.target.value)} />
           </label>
-          <button className="btn btn-primary">Test</button>
+          <div className="flex gap-2">
+            <button className="btn btn-primary">Test</button>
+            {canSend && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={sendState.busy}
+                title={`Emails what ${to || "the recipient"} would receive to ${user?.email}`}
+                onClick={async () => {
+                  setSendState({ busy: true, message: "Sending…", ok: true });
+                  try {
+                    const sent = await api.sendTest({ from, to, subject, body });
+                    setSendState({
+                      busy: false,
+                      ok: true,
+                      message: `Sent to ${sent.sentTo}${sent.signature ? ` with "${sent.signature}"` : " (no signature matched)"}. It may take a minute to arrive.`
+                    });
+                  } catch (err) {
+                    setSendState({ busy: false, ok: false, message: err instanceof Error ? err.message : String(err) });
+                  }
+                }}
+              >
+                Send test to me
+              </button>
+            )}
+          </div>
           {error && <p className="text-rose-700 text-sm">{error}</p>}
+          {sendState.message && (
+            <p className={`text-sm ${sendState.ok ? "text-teal-800" : "text-rose-700"}`}>{sendState.message}</p>
+          )}
+          {canSend && (
+            <p className="text-xs text-stone-500">
+              Send test delivers the result to <strong>{user?.email}</strong> only, through the same return path real mail
+              uses, from the address in From.
+            </p>
+          )}
         </form>
         <div className="panel p-5">
           {!result && <p className="text-stone-500 text-sm">Run a test to see which signature, campaigns, and disclaimers apply.</p>}

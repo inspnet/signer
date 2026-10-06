@@ -6,6 +6,7 @@ import { config } from "../config.js";
 import { logMail } from "../db/index.js";
 import { processRawMessage } from "../mail/process.js";
 import { getAllowedCidrs, initAllowedCidrs, startRangeRefresh } from "./ipranges.js";
+import { returnRouteFor } from "./route.js";
 
 export function ipAllowed(ip: string, cidrs: string[] = getAllowedCidrs()): boolean {
   if (!cidrs.length) return true;
@@ -39,21 +40,24 @@ function tlsOptions(): { key?: Buffer; cert?: Buffer } {
   return cachedTls;
 }
 
-async function relayUpstream(raw: Buffer, envelopeFrom: string, envelopeTo: string[]): Promise<void> {
-  if (!config.upstream.host) {
+export async function relayUpstream(raw: Buffer, envelopeFrom: string, envelopeTo: string[]): Promise<void> {
+  // Each sender domain goes back to its own Microsoft 365 endpoint where that
+  // can be determined (see route.ts); otherwise UPSTREAM_HOST.
+  const route = await returnRouteFor(envelopeFrom);
+  if (!route.host) {
     throw new Error("UPSTREAM_HOST is not configured; cannot return mail to Microsoft 365 / Google");
   }
+  const configured = route.via === "default";
   const transporter = nodemailer.createTransport({
-    host: config.upstream.host,
-    port: config.upstream.port,
-    secure: config.upstream.secure,
+    host: route.host,
+    // Exchange Online endpoints take mail on 25; the configured upstream keeps its own port and settings.
+    port: route.via === "mx" ? 25 : config.upstream.port,
+    secure: configured ? config.upstream.secure : false,
     tls: {
-      servername: config.upstream.tlsServername || config.upstream.host,
+      servername: configured ? config.upstream.tlsServername || route.host : route.host,
       rejectUnauthorized: config.upstream.tlsRejectUnauthorized
     },
-    auth: config.upstream.user
-      ? { user: config.upstream.user, pass: config.upstream.pass }
-      : undefined,
+    auth: configured && config.upstream.user ? { user: config.upstream.user, pass: config.upstream.pass } : undefined,
     name: config.smtp.hostname
   });
   await transporter.sendMail({
