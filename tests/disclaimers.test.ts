@@ -97,7 +97,7 @@ describe("disclaimers by domain", () => {
 describe("between the signature and the disclaimer", () => {
   it("always leaves a line break", () => {
     const html = testSignature({ from: "scott@inspired.co", to: "ada@contoso.example" }).htmlPreview;
-    expect(html).toContain("<br><p>Inspired Ltd, registered in England.</p>");
+    expect(html).toMatch(/<br><div style="font-family:Aptos[^"]*;"><p>Inspired Ltd, registered in England\.<\/p><\/div>/);
   });
 });
 

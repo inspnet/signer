@@ -234,6 +234,24 @@ describe("design renderer", () => {
     expect(html).not.toContain("{{");
   });
 
+  it("sizes text in points, like Outlook, and defaults to Aptos as Outlook writes it", () => {
+    const user = emptyUser("scott@inspired.co");
+    const text = (style: object, fontUnit?: "pt") => ({
+      width: 520,
+      fontUnit,
+      blocks: [{ id: "t", type: "text" as const, content: "Hi", style }]
+    });
+    const aptos = "Aptos, Aptos_EmbeddedFont, Aptos_MSFontService, Calibri, Helvetica, sans-serif";
+    // Saved in points: 12 means Outlook's 12.
+    expect(renderDesign(text({ fontSize: 12 }, "pt"), user)).toContain(`font-family:${aptos};font-size:12pt`);
+    // Saved before sizes were points: 12px is 9pt, so it looks as it did.
+    expect(renderDesign(text({ fontSize: 12 }), user)).toContain("font-size:9pt");
+    // An Aptos picked before gets Outlook's cloud-font names too.
+    expect(renderDesign(text({ fontFamily: "Aptos, Calibri, Arial, sans-serif", fontSize: 12 }, "pt"), user)).toContain(`font-family:${aptos};`);
+    // Another font chosen on purpose stays.
+    expect(renderDesign(text({ fontFamily: "Georgia, serif", fontSize: 12 }, "pt"), user)).toContain("font-family:Georgia, serif;");
+  });
+
   it("turns a text block into a link, with directory fields in the address", () => {
     const user = emptyUser("scott@inspired.co");
     user.website = "www.inspired.co";
@@ -312,9 +330,8 @@ describe("end-to-end processing", () => {
       ].join("\r\n")
     );
     const result = await processRawMessage(raw, "scott@inspired.co", ["ada@contoso.com"]);
-    const text = result.raw.toString("utf8");
-    const htmlStart = text.toLowerCase().lastIndexOf("content-type: text/html");
-    const html = htmlStart >= 0 ? text.slice(htmlStart) : text;
+    // Decoded: quoted-printable can wrap a long line in the middle of a word.
+    const html = String((await simpleParser(result.raw)).html);
     expect(html.indexOf("signer-signature")).toBeGreaterThan(html.indexOf("Thanks Ada"));
     expect(html.indexOf("signer-signature")).toBeLessThan(html.indexOf("gmail_quote"));
     expect(html.indexOf("signer-signature")).toBeLessThan(html.indexOf("old footer"));

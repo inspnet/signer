@@ -1,9 +1,9 @@
 import type { DirectoryUser } from "../directory/fields.js";
-import type { Block, Design, TextStyle } from "./design.js";
+import { APTOS_STACK, inPoints, type Block, type Design, type TextStyle } from "./design.js";
 
 const DEFAULT_STYLE: Required<TextStyle> = {
-  fontFamily: "Calibri, Arial, sans-serif",
-  fontSize: 12,
+  fontFamily: APTOS_STACK,
+  fontSize: 9,
   color: "#111827",
   bold: false,
   italic: false,
@@ -34,7 +34,7 @@ function styleAttr(style?: TextStyle): string {
   const s = { ...DEFAULT_STYLE, ...style };
   const parts = [
     `font-family:${s.fontFamily}`,
-    `font-size:${s.fontSize}px`,
+    `font-size:${s.fontSize}pt`,
     `color:${s.color}`,
     `line-height:${s.lineHeight}`,
     "margin:0",
@@ -133,7 +133,9 @@ function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): str
   }
 }
 
-export function renderDesign(design: Design, user: DirectoryUser, hideEmpty = true): string {
+export function renderDesign(input: Design, user: DirectoryUser, hideEmpty = true): string {
+  // Sizes in points, as Outlook's own text is, so 12 in the designer matches 12 in Outlook.
+  const design = inPoints(input);
   const inner = design.blocks.map((b) => renderBlock(b, user, hideEmpty)).filter(Boolean).join("");
   return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="${design.width}" style="width:${design.width}px;background:${design.background ?? "#ffffff"};border-collapse:collapse;"><tr><td style="padding:0;">${inner}</td></tr></table>`;
 }

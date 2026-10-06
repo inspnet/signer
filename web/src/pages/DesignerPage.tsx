@@ -13,19 +13,8 @@ import {
 } from "lucide-react";
 import { api, type Block, type DirectoryPerson, type Signature } from "../api/client";
 import { DIRECTORY_FIELDS } from "../lib/fields";
+import { APTOS_STACK, FONTS, inPoints } from "../lib/fonts";
 
-/** Fonts mail clients have, each with fallbacks for recipients who do not. */
-const FONTS = [
-  ["Aptos, Calibri, Arial, sans-serif", "Aptos"],
-  ["Calibri, Arial, sans-serif", "Calibri"],
-  ["Arial, Helvetica, sans-serif", "Arial"],
-  ["'Segoe UI', Tahoma, Arial, sans-serif", "Segoe UI"],
-  ["Verdana, Geneva, sans-serif", "Verdana"],
-  ["Tahoma, Arial, sans-serif", "Tahoma"],
-  ["'Trebuchet MS', Arial, sans-serif", "Trebuchet MS"],
-  ["Georgia, 'Times New Roman', serif", "Georgia"],
-  ["'Times New Roman', Times, serif", "Times New Roman"]
-] as const;
 import {
   LiveBlock,
   blockLabel,
@@ -49,14 +38,14 @@ function field(name: string, style: object = {}, link: "email" | "phone" | "url"
     id: nid(),
     type: "field",
     field: name,
-    style: { fontFamily: "Calibri, Arial, sans-serif", fontSize: 13, color: "#1c1917", ...style },
+    style: { fontFamily: APTOS_STACK, fontSize: 10, color: "#1c1917", ...style },
     link
   };
 }
 
 const chips: Array<{ label: string; icon: ComponentType<{ size?: number; className?: string }>; make: () => Block }> = [
-  { label: "Text", icon: Type, make: () => ({ id: nid(), type: "text", content: "Your text", style: { fontSize: 12, color: "#44403c" } }) },
-  { label: "Name", icon: UserRound, make: () => field("displayName", { bold: true, fontSize: 18, color: "#0f766e" }) },
+  { label: "Text", icon: Type, make: () => ({ id: nid(), type: "text", content: "Your text", style: { fontFamily: APTOS_STACK, fontSize: 10, color: "#44403c" } }) },
+  { label: "Name", icon: UserRound, make: () => field("displayName", { bold: true, fontSize: 14, color: "#0f766e" }) },
   { label: "Title", icon: UserRound, make: () => field("jobTitle") },
   { label: "Email", icon: Type, make: () => field("email", {}, "email") },
   { label: "Phone", icon: Type, make: () => field("telephone", {}, "phone") },
@@ -94,7 +83,9 @@ export function DesignerPage() {
 
   useEffect(() => {
     if (!id) return;
-    void api.signature(id).then((s) => {
+    void api.signature(id).then((loaded) => {
+      // Sizes in points, as in Outlook: 12 here is the same size as 12 there.
+      const s = { ...loaded, design: inPoints(loaded.design) };
       setSig(s);
       setSaved(JSON.stringify({ name: s.name, design: s.design }));
     });
@@ -217,7 +208,7 @@ export function DesignerPage() {
                 { width: "88", blocks: [{ id: nid(), type: "image", src: "{{photoUrl}}", width: 72, alt: "Photo" }] },
                 {
                   width: "360",
-                  blocks: [field("displayName", { bold: true, fontSize: 16, color: "#0f766e" }), field("jobTitle"), field("email", {}, "email")]
+                  blocks: [field("displayName", { bold: true, fontSize: 12, color: "#0f766e" }), field("jobTitle"), field("email", {}, "email")]
                 }
               ]
             })
@@ -387,7 +378,7 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
             Font
             <select
               className="input mt-1"
-              value={block.style?.fontFamily || "Calibri, Arial, sans-serif"}
+              value={block.style?.fontFamily || APTOS_STACK}
               onChange={(e) => onChange({ ...block, style: { ...block.style, fontFamily: e.target.value } })}
             >
               {FONTS.map(([value, label]) => (
@@ -395,11 +386,11 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
                   {label}
                 </option>
               ))}
-              {!FONTS.some(([value]) => value === (block.style?.fontFamily || FONTS[1][0])) && (
+              {!FONTS.some(([value]) => value === (block.style?.fontFamily || APTOS_STACK)) && (
                 <option value={block.style?.fontFamily}>{block.style?.fontFamily}</option>
               )}
             </select>
-            {(block.style?.fontFamily ?? "").startsWith("Aptos") && (
+            {(block.style?.fontFamily || APTOS_STACK).startsWith("Aptos") && (
               <span className="block mt-1 text-xs text-slate-500">
                 Aptos is Microsoft 365&apos;s default font. Recipients without it see Calibri, then Arial; so may this preview.
               </span>
@@ -407,11 +398,13 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label>
-              Size
+              Size (pt)
               <input
                 type="number"
+                step={0.5}
+                min={6}
                 className="input mt-1"
-                value={block.style?.fontSize ?? 13}
+                value={block.style?.fontSize ?? 9}
                 onChange={(e) => onChange({ ...block, style: { ...block.style, fontSize: Number(e.target.value) } })}
               />
             </label>
