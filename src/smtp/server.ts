@@ -91,12 +91,14 @@ function createServer(banner: string): SMTPServer {
         void handleMessage(Buffer.concat(chunks), session)
           .then(() => callback())
           .catch((err: Error) => {
-            if (config.failureMode === "fail-closed") {
-              callback(err);
-            } else {
-              console.error("Signer processing failed; fail-open", err);
-              callback();
-            }
+            // Reaching here means the message was not handed back: fail-open has
+            // already tried relaying it unsigned. Never answer 250 for mail we
+            // no longer hold. A 4xx leaves it queued at Microsoft/Google, which
+            // retry; acknowledging it would silently drop it.
+            console.error("[signer] Could not deliver a message; deferring it so the sender retries", err);
+            const deferral = new Error("Temporary failure, please retry later") as Error & { responseCode: number };
+            deferral.responseCode = 451;
+            callback(deferral);
           });
       });
     }
@@ -119,13 +121,22 @@ export function hasProcessedHeader(raw: Buffer): boolean {
   return new RegExp(`^${name}:[ \t]*true[ \t]*$`, "im").test(headerBlock.replace(/\r?\n[ \t]+/g, " "));
 }
 
+/** Activity logging must never change the SMTP answer for mail already delivered. */
+function record(entry: Parameters<typeof logMail>[0]): void {
+  try {
+    logMail(entry);
+  } catch (err) {
+    console.error("[signer] Could not write the activity log", err);
+  }
+}
+
 async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<void> {
   const started = Date.now();
   const envelopeFrom = session.envelope.mailFrom ? session.envelope.mailFrom.address : "";
   const envelopeTo = session.envelope.rcptTo.map((r) => r.address);
   if (hasProcessedHeader(raw)) {
     await relayUpstream(raw, envelopeFrom, envelopeTo);
-    logMail({
+    record({
       messageId: "",
       sender: envelopeFrom,
       recipients: envelopeTo,
@@ -142,7 +153,7 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
   try {
     const result = await processRawMessage(raw, envelopeFrom, envelopeTo);
     await relayUpstream(result.raw, envelopeFrom, envelopeTo);
-    logMail({
+    record({
       messageId: "",
       sender: envelopeFrom,
       recipients: envelopeTo,
@@ -155,7 +166,7 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
       processingMs: Date.now() - started
     });
   } catch (err) {
-    logMail({
+    record({
       messageId: "",
       sender: envelopeFrom,
       recipients: envelopeTo,

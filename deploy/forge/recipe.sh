@@ -17,7 +17,8 @@
 #   6. Takes a nightly SQLite backup and keeps 14 days.
 #   7. Lets the site user restart the service from the deploy script.
 #   8. Opens 25 and 587 in ufw.
-#   9. Checks whether Linode's outbound SMTP restriction is still in place.
+#   9. Limits the system journal, which holds Signer's request log, to 14 days.
+#  10. Checks whether Linode's outbound SMTP restriction is still in place.
 
 set -euo pipefail
 
@@ -268,6 +269,20 @@ visudo -cf /etc/sudoers.d/signer > /dev/null || { rm -f /etc/sudoers.d/signer; d
 # Read the service log without sudo: journalctl -u signer
 usermod -aG systemd-journal "$SIGNER_USER"
 echo "${SIGNER_USER} may restart signer and read its journal."
+
+# --------------------------------------------------------------------------
+say "Log retention"
+# Signer logs each portal and image request with the client's IP address to
+# the journal. Keep it no longer than the backups (see PRIVACY.md). This
+# applies to the whole journal, which is fine on a server dedicated to Signer.
+install -d /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/signer-retention.conf <<EOF
+# Installed by the Signer Forge recipe.
+[Journal]
+MaxRetentionSec=14day
+EOF
+$SYSTEMCTL restart systemd-journald
+echo "The journal keeps 14 days."
 
 # --------------------------------------------------------------------------
 say "Firewall"

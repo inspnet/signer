@@ -4,7 +4,7 @@ Self-hosted **server-side** email signatures and legal disclaimers for Microsoft
 
 Signatures are applied in the mail flow **after** the user clicks Send — not by pushing HTML into the user's mailbox with Graph or the Gmail API, which iOS Mail and other clients can ignore or overwrite.
 
-Mail is processed on **your own server** (deployed on Linode with Laravel Forge) and returned to Microsoft 365 or Google. It does not pass through a vendor SaaS.
+Mail is processed on **your own server** (deployed on Linode with Laravel Forge) and returned to Microsoft 365 or Google. It does not pass through a vendor SaaS, and message content is never stored. See [PRIVACY.md](PRIVACY.md) for exactly what is kept and for how long.
 
 ## Why connectors instead of mailbox APIs
 
@@ -105,7 +105,7 @@ Do **not** set `DEMO_MODE=true` or `AUTH_ALLOW_DEV_LOGIN=true` on a server that 
 | **Outbound** Signer → Microsoft 365 | `<tenant>.mail.protection.outlook.com:25` | **Blocked on new Linode accounts** until support lifts it ([step 4](#4-ask-linode-to-lift-the-smtp-restriction)). |
 | **Outbound** Signer → Google | `smtp-relay.gmail.com:587` | **Also blocked** on new accounts: Linode restricts 25, 465 and 587 together. |
 
-Until outbound SMTP is open, Signer accepts mail but cannot hand it back. With `FAILURE_MODE=fail-open` it will then try to relay the message unsigned, and that fails the same way. **Do not route real mail through Signer until the recipe reports outbound SMTP as `open`.**
+Until outbound SMTP is open, Signer cannot hand mail back. It then refuses each message with a temporary error (451), so it waits in Microsoft's or Google's queue and is retried, but it is delayed and eventually bounces if the block stays. **Do not route real mail through Signer until the recipe reports outbound SMTP as `open`.**
 
 ---
 
@@ -354,7 +354,7 @@ In [admin.google.com](https://admin.google.com) → Apps → Google Workspace �
 
 **Configuration changes.** Edit the site's Environment in Forge, then redeploy or run `sudo systemctl restart signer`. The recipe allows the `forge` user to run that without a password.
 
-**Logs.** `journalctl -u signer -f`. The `forge` user can read them without sudo.
+**Logs.** `journalctl -u signer -f`. The `forge` user can read them without sudo. The recipe limits the journal to 14 days, and the Nginx snippet turns off Nginx's access log, so client IP addresses are not kept longer than [PRIVACY.md](PRIVACY.md) states.
 
 **Certificate renewals.** Forge renews the Let's Encrypt certificate for Nginx. `signer-cert-sync.timer` copies it to `/home/forge/signer-tls` once a day and restarts Signer when it changed, so SMTP STARTTLS never serves an expired certificate. To apply a renewal immediately: `sudo /usr/local/sbin/signer-sync-cert --restart-if-changed` (as root).
 
@@ -370,7 +370,7 @@ In [admin.google.com](https://admin.google.com) → Apps → Google Workspace �
 | Outbound SMTP | Re-run the recipe; it tests `UPSTREAM_HOST:UPSTREAM_PORT` |
 | Allowlist | `GET /api/settings` → `smtpAllowlist` |
 | Loop header | Message trace in Microsoft 365 / Gmail shows `X-Signer-MessageProcessed: true` after a successful pass |
-| Unsigned mail | `FAILURE_MODE=fail-open` delivers without a signature if processing throws; `fail-closed` returns SMTP 4xx so the tenant retries |
+| Unsigned mail | `FAILURE_MODE=fail-open` delivers without a signature if processing throws; `fail-closed` returns SMTP 4xx so the tenant retries. Mail Signer cannot hand back is always deferred with 451, in either mode |
 
 #### Troubleshooting
 
@@ -412,7 +412,7 @@ docker compose logs -f --tail=80
 - **User details** — employees edit only admin-unlocked fields
 - **RBAC** — owner / admin / editor / designer / user. Admins manage roles, but only `SUPER_ADMIN_EMAIL` can grant `owner`
 - **Uploads** — PNG, JPEG, GIF and WEBP artwork, validated by file contents rather than extension
-- **Analytics** — counts and metadata; message bodies are not stored
+- **Analytics** — counts and a 30-day activity log of senders and recipients; message content is never stored ([PRIVACY.md](PRIVACY.md))
 
 ## Local development
 
@@ -457,7 +457,9 @@ See `.env.example` for the full list with comments. The keys that matter most:
 | `UPSTREAM_HOST` / `UPSTREAM_PORT` | — / `25` | Where signed mail is handed back |
 | `UPSTREAM_TLS_REJECT_UNAUTHORIZED` | `true` | Verify the upstream certificate. Only turn off for a lab host with a self-signed cert |
 | `PROCESSED_HEADER` | `X-Signer-MessageProcessed` | Must match the connector rule that skips already-processed mail |
-| `FAILURE_MODE` | `fail-open` | `fail-open` delivers unsigned if processing throws; `fail-closed` defers with 4xx |
+| `FAILURE_MODE` | `fail-open` | `fail-open` delivers unsigned if processing throws; `fail-closed` defers with 4xx. Either way, mail that cannot be handed back is deferred, never dropped |
+| `MAIL_LOG_RETENTION_DAYS` | `30` | Days the activity log (senders, recipients, outcome) is kept; `0` keeps it forever. Stated in [PRIVACY.md](PRIVACY.md) |
+| `AUDIT_LOG_RETENTION_DAYS` | `365` | Days the admin audit trail is kept; `0` keeps it forever |
 | `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW_MINUTES` | `20` / `5` | Sign-in attempts per client IP per window |
 | `OIDC_DISCOVERY_CACHE_MINUTES` | `60` | How long a provider's discovery document is reused; `0` disables |
 | `DEMO_MODE` | `false` | Seeds sample data and allows dev login. Never enable on an instance handling real mail |

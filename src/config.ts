@@ -58,6 +58,12 @@ export const config = {
   processedHeader: env("PROCESSED_HEADER", "X-Signer-MessageProcessed"),
   failureMode: env("FAILURE_MODE", "fail-open") as "fail-open" | "fail-closed",
   directorySyncMinutes: envInt("DIRECTORY_SYNC_MINUTES", 240),
+  retention: {
+    /** Days to keep the per-message activity log (sender, recipients, outcome). 0 keeps it forever. */
+    mailLogDays: envInt("MAIL_LOG_RETENTION_DAYS", 30),
+    /** Days to keep the admin audit trail. 0 keeps it forever. */
+    auditLogDays: envInt("AUDIT_LOG_RETENTION_DAYS", 365)
+  },
   auth: {
     /** Sign-in attempts allowed per client IP per window. */
     rateLimitMax: envInt("AUTH_RATE_LIMIT_MAX", 20),
