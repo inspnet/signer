@@ -20,38 +20,40 @@ export function CampaignsPage() {
         title="Campaigns"
         description="Time-bound banners appended after the signature. Rotate promotions without editing every template."
       />
-      <form
-        className="mt-8 panel p-5 grid gap-3 max-w-xl"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          await api.saveCampaign({ name, imageUrl, href, enabled: true });
-          setImageUrl("");
-          await load();
-        }}
-      >
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />
-        <input className="input" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="Banner image URL" />
-        <input className="input" value={href} onChange={(e) => setHref(e.target.value)} placeholder="Click-through URL" />
-        <button className="btn btn-primary w-fit">Create campaign</button>
-      </form>
-      <div className="mt-6 space-y-3 max-w-xl">
-        {items.map((c) => (
-          <div key={c.id} className="panel p-4 flex justify-between items-center">
-            <div>
-              <div className="font-medium">{c.name}</div>
-              <div className="text-sm text-stone-500">{c.enabled ? "Enabled" : "Disabled"}</div>
+      <div className="mt-8 grid gap-6 lg:grid-cols-2 items-start">
+        <form
+          className="panel p-5 grid gap-3"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            await api.saveCampaign({ name, imageUrl, href, enabled: true });
+            setImageUrl("");
+            await load();
+          }}
+        >
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" />
+          <input className="input" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="Banner image URL" />
+          <input className="input" value={href} onChange={(e) => setHref(e.target.value)} placeholder="Click-through URL" />
+          <button className="btn btn-primary w-fit">Create campaign</button>
+        </form>
+        <div className="space-y-3">
+          {items.map((c) => (
+            <div key={c.id} className="panel p-4 flex justify-between items-center">
+              <div>
+                <div className="font-medium">{c.name}</div>
+                <div className="text-sm text-stone-500">{c.enabled ? "Enabled" : "Disabled"}</div>
+              </div>
+              <button
+                className="text-rose-700 text-sm"
+                onClick={async () => {
+                  await api.deleteCampaign(c.id);
+                  await load();
+                }}
+              >
+                Delete
+              </button>
             </div>
-            <button
-              className="text-rose-700 text-sm"
-              onClick={async () => {
-                await api.deleteCampaign(c.id);
-                await load();
-              }}
-            >
-              Delete
-            </button>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );

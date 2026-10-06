@@ -46,40 +46,48 @@ function MailFlow() {
     contentCompliance: Record<string, string>;
   };
   return (
-    <div className="mt-6 space-y-6 max-w-4xl">
-      <p className="text-stone-600 leading-7">{(data.notes as string[]).join(" ")}</p>
-      <PublicIpNote ip={data.publicIp as PublicIpInfo} />
-      <ReturnPathTest />
-      <section className="panel p-5">
-        <h2 className="font-semibold text-lg">Microsoft 365 / Exchange Online</h2>
-        <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-stone-700">
-          <li>
-            Create an outbound connector to {ms.sendConnector.smartHost} (port 25), validating its TLS certificate, scoped to a
-            transport rule.
-          </li>
-          <li>
-            Create an inbound connector from {ms.receiveConnector.from}, identified by {ms.receiveConnector.identifiedBy.toLowerCase()},
-            requiring TLS.
-          </li>
-          <li>
-            Transport rule: sender inside the organisation, except if header {ms.transportRule.exceptIfHeader} is true, redirect to the
-            Signer send connector. It is created <strong>disabled</strong>: enable it for one pilot mailbox first, check that mail arrives
-            signed, then remove the pilot condition to go live.
-          </li>
-        </ol>
-        <pre className="mt-4 bg-mist p-3 rounded-lg text-xs overflow-auto">{ms.powershell}</pre>
-      </section>
-      <section className="panel p-5">
-        <h2 className="font-semibold text-lg">Google Workspace</h2>
-        <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-stone-700">
-          <li>
-            Hosts: add {String(google.hostRoute.host)} port {String(google.hostRoute.port)}.
-          </li>
-          <li>SMTP relay: {google.smtpRelay.note}</li>
-          <li>Content compliance: {google.contentCompliance.expression}, then change route to Signer with TLS.</li>
-        </ol>
-      </section>
-      <p className="text-sm text-stone-600">{String(data.spf)}</p>
+    <div className="mt-6 space-y-6">
+      <div className="grid gap-6 xl:grid-cols-2 items-start">
+        <div className="space-y-4">
+          <p className="text-stone-600 leading-7">{(data.notes as string[]).join(" ")}</p>
+          <PublicIpNote ip={data.publicIp as PublicIpInfo} />
+        </div>
+        <ReturnPathTest />
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
+        <section className="panel p-5">
+          <h2 className="font-semibold text-lg">Microsoft 365 / Exchange Online</h2>
+          <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-stone-700">
+            <li>
+              Create an outbound connector to {ms.sendConnector.smartHost} (port 25), validating its TLS certificate, scoped to a
+              transport rule.
+            </li>
+            <li>
+              Create an inbound connector from {ms.receiveConnector.from}, identified by {ms.receiveConnector.identifiedBy.toLowerCase()},
+              requiring TLS.
+            </li>
+            <li>
+              Transport rule: sender inside the organisation, except if header {ms.transportRule.exceptIfHeader} is true, redirect to the
+              Signer send connector. It is created <strong>disabled</strong>: enable it for one pilot mailbox first, check that mail arrives
+              signed, then remove the pilot condition to go live.
+            </li>
+          </ol>
+          <pre className="mt-4 bg-mist p-3 rounded-lg text-xs overflow-auto">{ms.powershell}</pre>
+        </section>
+        <div className="space-y-6">
+          <section className="panel p-5">
+            <h2 className="font-semibold text-lg">Google Workspace</h2>
+            <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-stone-700">
+              <li>
+                Hosts: add {String(google.hostRoute.host)} port {String(google.hostRoute.port)}.
+              </li>
+              <li>SMTP relay: {google.smtpRelay.note}</li>
+              <li>Content compliance: {google.contentCompliance.expression}, then change route to Signer with TLS.</li>
+            </ol>
+          </section>
+          <p className="text-sm text-stone-600 leading-6">{String(data.spf)}</p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -267,20 +275,22 @@ function Fields() {
     void api.fields().then(setFields);
   }, []);
   return (
-    <div className="mt-6 panel p-5 max-w-xl">
+    <div className="mt-6 panel p-5">
       <p className="text-sm text-stone-600 mb-4">Users may edit only the fields you enable. Directory-sourced values remain the default until overridden.</p>
-      {fields.map((f) => (
-        <label key={f.key} className="flex items-center justify-between py-1.5 text-sm">
-          <span>
-            {f.label} {f.directory && <span className="text-stone-400">(directory)</span>}
-          </span>
-          <input
-            type="checkbox"
-            checked={f.userEditable}
-            onChange={(e) => setFields(fields.map((x) => (x.key === f.key ? { ...x, userEditable: e.target.checked } : x)))}
-          />
-        </label>
-      ))}
+      <div className="grid gap-x-10 sm:grid-cols-2 xl:grid-cols-3">
+        {fields.map((f) => (
+          <label key={f.key} className="flex items-center justify-between gap-3 py-1.5 text-sm border-b border-line">
+            <span>
+              {f.label} {f.directory && <span className="text-stone-400">(directory)</span>}
+            </span>
+            <input
+              type="checkbox"
+              checked={f.userEditable}
+              onChange={(e) => setFields(fields.map((x) => (x.key === f.key ? { ...x, userEditable: e.target.checked } : x)))}
+            />
+          </label>
+        ))}
+      </div>
       <button
         className="mt-4 btn btn-primary"
         onClick={async () => {
@@ -302,39 +312,68 @@ function Admins() {
   }, []);
   if (!data) return <p className="mt-4 text-stone-500">Loading…</p>;
   return (
-    <div className="mt-6 max-w-xl">
-      <p className="text-sm text-stone-600">
-        Super admin is <strong>{data.superAdmin || "(set SUPER_ADMIN_EMAIL)"}</strong> and is not stored in the database.
-      </p>
-      <form
-        className="mt-4 flex gap-2"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          await api.saveAdmin(email, role);
-          setData(await api.admins());
-        }}
-      >
-        <input className="input flex-1" placeholder="user@domain" value={email} onChange={(e) => setEmail(e.target.value)} />
-        <select className="input w-auto" value={role} onChange={(e) => setRole(e.target.value)}>
-          <option value="owner">Owner</option>
-          <option value="admin">Admin</option>
-          <option value="editor">Editor</option>
-          <option value="designer">Designer</option>
-          <option value="user">User</option>
-        </select>
-        <button className="btn btn-primary">Grant</button>
-      </form>
-      <ul className="mt-4 panel divide-y divide-line">
-        {data.roles.map((r) => (
-          <li key={r.email} className="p-3 flex justify-between text-sm">
-            <span>{r.email}</span>
-            <span className="text-stone-500">{r.role}</span>
-          </li>
-        ))}
-      </ul>
+    <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
+      <div>
+        <p className="text-sm text-stone-600">
+          Super admin is <strong>{data.superAdmin || "(set SUPER_ADMIN_EMAIL)"}</strong> and is not stored in the database.
+        </p>
+        <form
+          className="mt-4 flex gap-2"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            await api.saveAdmin(email, role);
+            setData(await api.admins());
+          }}
+        >
+          <input
+            className="input flex-1 min-w-0"
+            type="email"
+            required
+            placeholder="user@domain"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <select className="input w-40 shrink-0" value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="owner">Owner</option>
+            <option value="admin">Admin</option>
+            <option value="editor">Editor</option>
+            <option value="designer">Designer</option>
+            <option value="user">User</option>
+          </select>
+          <button className="btn btn-primary">Grant</button>
+        </form>
+        <ul className="mt-4 panel divide-y divide-line">
+          {data.roles.map((r) => (
+            <li key={r.email} className="p-3 flex justify-between text-sm">
+              <span>{r.email}</span>
+              <span className="text-stone-500 capitalize">{r.role}</span>
+            </li>
+          ))}
+          {!data.roles.length && <li className="p-3 text-sm text-stone-500">No roles granted yet. Everyone else signs in as a user.</li>}
+        </ul>
+      </div>
+      <section className="panel p-5 text-sm">
+        <h2 className="font-semibold text-lg">What each role can do</h2>
+        <dl className="mt-3 grid grid-cols-[6rem_1fr] gap-x-3 gap-y-2 text-stone-700">
+          {ROLES.map(([name, can]) => (
+            <div key={name} className="contents">
+              <dt className="font-medium">{name}</dt>
+              <dd>{can}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
     </div>
   );
 }
+
+const ROLES = [
+  ["Owner", "Everything an admin can do, and install updates."],
+  ["Admin", "Settings: connectors, domains, directory, field locks and roles; plus everything an editor can do."],
+  ["Editor", "Create, edit, delete and reorder signatures, disclaimers and campaigns; send tests."],
+  ["Designer", "Create and edit signatures, disclaimers and campaigns, and upload images; cannot delete or reorder."],
+  ["User", "Edit their own details under My Details, where field locks allow."]
+] as const;
 
 function Domains() {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.domains>> | null>(null);
@@ -355,98 +394,102 @@ function Domains() {
   };
   if (!data) return <p className="mt-4 text-stone-500">Loading…</p>;
   return (
-    <div className="mt-6 max-w-2xl space-y-6">
-      <p className="text-sm text-stone-600 leading-6">
-        The email domains this Microsoft 365 or Google Workspace tenant sends from. Only senders on these domains get a
-        signature, disclaimer or campaign; mail from any other domain passes through unchanged. Recipients on these domains
-        count as <strong>internal</strong> in rules. The connectors and routing rules already cover every domain in the
-        tenant, so adding a domain here needs no change in Exchange or Google.
-      </p>
-      <p className="text-sm text-stone-600 leading-6">
-        {data.perDomainMx ? (
-          <>
-            Signed mail goes back to each domain&apos;s own Microsoft 365 endpoint, found from its MX record. A domain whose MX is
-            not Microsoft 365 (a filtering service, for example) uses <code>{data.upstreamHost}</code> from setup unless you set a
-            return host for it.
-          </>
-        ) : (
-          <>
-            Signed mail goes back through <code>{data.upstreamHost || "UPSTREAM_HOST (not set)"}</code> for every domain, unless you
-            set a return host for a domain.
-          </>
-        )}
-      </p>
-      <form
-        className="flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void act(async () => {
-            await api.addDomain(name);
-            setName("");
-          });
-        }}
-      >
-        <input className="input flex-1" placeholder="example.com" value={name} onChange={(e) => setName(e.target.value)} />
-        <button className="btn btn-primary" disabled={!name.trim()}>
-          Add domain
-        </button>
-      </form>
-      {error && <p className="text-sm text-red-700">{error}</p>}
-      <ul className="panel divide-y divide-line">
-        {data.domains.map((d) => (
-          <li key={d.name} className="p-3 flex items-start justify-between gap-4 text-sm">
-            <span className="min-w-0">
-              <strong>{d.name}</strong>
-              {d.primary && <span className="ml-2 rounded bg-mist px-2 py-0.5 text-xs text-stone-600">Primary</span>}
-              {d.route && (
-                <span className="block text-xs text-stone-500 mt-1">
-                  Returns to <code>{d.route.host || "(nowhere: UPSTREAM_HOST is not set)"}</code> · {d.route.detail}
+    <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
+      <div className="space-y-4 xl:order-2">
+        <p className="text-sm text-stone-600 leading-6">
+          The email domains this Microsoft 365 or Google Workspace tenant sends from. Only senders on these domains get a
+          signature, disclaimer or campaign; mail from any other domain passes through unchanged. Recipients on these domains
+          count as <strong>internal</strong> in rules. The connectors and routing rules already cover every domain in the
+          tenant, so adding a domain here needs no change in Exchange or Google.
+        </p>
+        <p className="text-sm text-stone-600 leading-6">
+          {data.perDomainMx ? (
+            <>
+              Signed mail goes back to each domain&apos;s own Microsoft 365 endpoint, found from its MX record. A domain whose MX is
+              not Microsoft 365 (a filtering service, for example) uses <code>{data.upstreamHost}</code> from setup unless you set a
+              return host for it.
+            </>
+          ) : (
+            <>
+              Signed mail goes back through <code>{data.upstreamHost || "UPSTREAM_HOST (not set)"}</code> for every domain, unless you
+              set a return host for a domain.
+            </>
+          )}
+        </p>
+      </div>
+      <div className="space-y-4 xl:order-1">
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void act(async () => {
+              await api.addDomain(name);
+              setName("");
+            });
+          }}
+        >
+          <input className="input flex-1" placeholder="example.com" value={name} onChange={(e) => setName(e.target.value)} />
+          <button className="btn btn-primary" disabled={!name.trim()}>
+            Add domain
+          </button>
+        </form>
+        {error && <p className="text-sm text-red-700">{error}</p>}
+        <ul className="panel divide-y divide-line">
+          {data.domains.map((d) => (
+            <li key={d.name} className="p-3 flex items-start justify-between gap-4 text-sm">
+              <span className="min-w-0">
+                <strong>{d.name}</strong>
+                {d.primary && <span className="ml-2 rounded bg-mist px-2 py-0.5 text-xs text-stone-600">Primary</span>}
+                {d.route && (
+                  <span className="block text-xs text-stone-500 mt-1">
+                    Returns to <code>{d.route.host || "(nowhere: UPSTREAM_HOST is not set)"}</code> · {d.route.detail}
+                  </span>
+                )}
+                <ReturnHostEditor
+                  domain={d.name}
+                  value={d.returnHost}
+                  onSaved={() => void load()}
+                  onError={setError}
+                />
+              </span>
+              {!d.primary && (
+                <span className="flex gap-2 shrink-0">
+                  <button className="btn btn-ghost" onClick={() => void act(() => api.makePrimaryDomain(d.name))}>
+                    Make primary
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      if (confirm(`Stop adding signatures for senders on ${d.name}?`)) void act(() => api.removeDomain(d.name));
+                    }}
+                  >
+                    Remove
+                  </button>
                 </span>
               )}
-              <ReturnHostEditor
-                domain={d.name}
-                value={d.returnHost}
-                onSaved={() => void load()}
-                onError={setError}
-              />
-            </span>
-            {!d.primary && (
-              <span className="flex gap-2 shrink-0">
-                <button className="btn btn-ghost" onClick={() => void act(() => api.makePrimaryDomain(d.name))}>
-                  Make primary
-                </button>
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => {
-                    if (confirm(`Stop adding signatures for senders on ${d.name}?`)) void act(() => api.removeDomain(d.name));
-                  }}
-                >
-                  Remove
-                </button>
-              </span>
-            )}
-          </li>
-        ))}
-        {!data.domains.length && <li className="p-3 text-sm text-stone-500">No domains yet: every sender is signed until you add one.</li>}
-      </ul>
-      {data.suggestions.length > 0 && (
-        <div>
-          <h3 className="font-medium text-sm">Found in the directory</h3>
-          <p className="text-xs text-stone-500 mt-1">Staff addresses use these domains, but they are not in the list.</p>
-          <ul className="mt-2 panel divide-y divide-line">
-            {data.suggestions.map((s) => (
-              <li key={s.domain} className="p-3 flex items-center justify-between text-sm">
-                <span>
-                  {s.domain} <span className="text-stone-400">({s.people} {s.people === 1 ? "person" : "people"})</span>
-                </span>
-                <button className="btn btn-ghost" onClick={() => void act(() => api.addDomain(s.domain))}>
-                  Add
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+            </li>
+          ))}
+          {!data.domains.length && <li className="p-3 text-sm text-stone-500">No domains yet: every sender is signed until you add one.</li>}
+        </ul>
+        {data.suggestions.length > 0 && (
+          <div>
+            <h3 className="font-medium text-sm">Found in the directory</h3>
+            <p className="text-xs text-stone-500 mt-1">Staff addresses use these domains, but they are not in the list.</p>
+            <ul className="mt-2 panel divide-y divide-line">
+              {data.suggestions.map((s) => (
+                <li key={s.domain} className="p-3 flex items-center justify-between text-sm">
+                  <span>
+                    {s.domain} <span className="text-stone-400">({s.people} {s.people === 1 ? "person" : "people"})</span>
+                  </span>
+                  <button className="btn btn-ghost" onClick={() => void act(() => api.addDomain(s.domain))}>
+                    Add
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -494,61 +537,41 @@ function Updates() {
   if (!info) return <p className="mt-4 text-stone-500">Loading…</p>;
   const current = info.current;
   return (
-    <div className="mt-6 max-w-3xl space-y-6">
-      <section className="panel p-5 text-sm space-y-1">
-        <h2 className="font-semibold text-lg">Installed version</h2>
-        {current ? (
-          <>
-            <p>
-              <code>{shortSha(current.commit)}</code> {current.subject}
-            </p>
-            <p className="text-stone-500">
-              {current.date && new Date(current.date).toLocaleString()} · branch {current.branch}
-            </p>
-          </>
-        ) : (
-          <p className="text-stone-500">Not a git checkout, so the version is unknown.</p>
-        )}
-      </section>
+    <div className="mt-6 grid gap-6 xl:grid-cols-2 items-start">
+      <div className="space-y-6">
+        <section className="panel p-5 text-sm space-y-1">
+          <h2 className="font-semibold text-lg">Installed version</h2>
+          {current ? (
+            <>
+              <p>
+                <code>{shortSha(current.commit)}</code> {current.subject}
+              </p>
+              <p className="text-stone-500">
+                {current.date && new Date(current.date).toLocaleString()} · branch {current.branch}
+              </p>
+            </>
+          ) : (
+            <p className="text-stone-500">Not a git checkout, so the version is unknown.</p>
+          )}
+        </section>
 
-      {!info.available ? (
-        <p className="text-sm text-stone-600 leading-6">
-          Updating from the portal needs a server set up with <code>deploy/install.sh</code>. To turn it on for an install
-          made before this feature existed, re-run the installer once on the server:{" "}
-          <code>curl -fsSL https://raw.githubusercontent.com/inspnet/signer/main/deploy/install.sh -o install.sh && sudo bash install.sh</code>
-        </p>
-      ) : (
-        <section className="panel p-5 text-sm space-y-3">
-          <div className="flex gap-2">
-            <button
-              className="btn btn-ghost"
-              disabled={!!busy || polling}
-              onClick={async () => {
-                setBusy("check");
-                setError("");
-                try {
-                  setCheck(await api.checkUpdates());
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : String(err));
-                } finally {
-                  setBusy("");
-                }
-              }}
-            >
-              {busy === "check" ? "Checking…" : "Check for updates"}
-            </button>
-            {check?.updateAvailable && (
+        {!info.available ? (
+          <p className="text-sm text-stone-600 leading-6">
+            Updating from the portal needs a server set up with <code>deploy/install.sh</code>. To turn it on for an install
+            made before this feature existed, re-run the installer once on the server:{" "}
+            <code>curl -fsSL https://raw.githubusercontent.com/inspnet/signer/main/deploy/install.sh -o install.sh && sudo bash install.sh</code>
+          </p>
+        ) : (
+          <section className="panel p-5 text-sm space-y-3">
+            <div className="flex gap-2">
               <button
-                className="btn btn-primary"
+                className="btn btn-ghost"
                 disabled={!!busy || polling}
                 onClick={async () => {
-                  if (!confirm("Install the update now? Signer restarts, and mail arriving during the restart is retried by Microsoft or Google.")) return;
-                  setBusy("install");
+                  setBusy("check");
                   setError("");
                   try {
-                    await api.installUpdate();
-                    setStatus({ state: "requested", message: "Waiting for the updater to start…", log: [] });
-                    setPolling(true);
+                    setCheck(await api.checkUpdates());
                   } catch (err) {
                     setError(err instanceof Error ? err.message : String(err));
                   } finally {
@@ -556,35 +579,57 @@ function Updates() {
                   }
                 }}
               >
-                Install update
+                {busy === "check" ? "Checking…" : "Check for updates"}
               </button>
-            )}
-          </div>
-          {error && <p className="text-red-700">{error}</p>}
-          {check && !check.updateAvailable && <p className="text-stone-600">Signer is up to date.</p>}
-          {check?.updateAvailable && (
-            <div>
-              <p>
-                {check.commits.length ? `${check.commits.length} new change${check.commits.length === 1 ? "" : "s"}` : "A newer version is available"}{" "}
-                (<code>{shortSha(check.latest.commit)}</code>){check.commits.length ? ":" : "."}
-              </p>
-              <ul className="mt-2 list-disc ml-5 space-y-1">
-                {check.commits.map((c) => (
-                  <li key={c.commit}>
-                    {c.subject} <span className="text-stone-400">— {new Date(c.date).toLocaleDateString()}</span>
-                  </li>
-                ))}
-              </ul>
-              {check.installerChanged && (
-                <p className="mt-3 text-amber-800">
-                  This update also changes the server setup (<code>deploy/install.sh</code>). Install it here, then re-run the
-                  installer on the server to apply those changes too.
-                </p>
+              {check?.updateAvailable && (
+                <button
+                  className="btn btn-primary"
+                  disabled={!!busy || polling}
+                  onClick={async () => {
+                    if (!confirm("Install the update now? Signer restarts, and mail arriving during the restart is retried by Microsoft or Google.")) return;
+                    setBusy("install");
+                    setError("");
+                    try {
+                      await api.installUpdate();
+                      setStatus({ state: "requested", message: "Waiting for the updater to start…", log: [] });
+                      setPolling(true);
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : String(err));
+                    } finally {
+                      setBusy("");
+                    }
+                  }}
+                >
+                  Install update
+                </button>
               )}
             </div>
-          )}
-        </section>
-      )}
+            {error && <p className="text-red-700">{error}</p>}
+            {check && !check.updateAvailable && <p className="text-stone-600">Signer is up to date.</p>}
+            {check?.updateAvailable && (
+              <div>
+                <p>
+                  {check.commits.length ? `${check.commits.length} new change${check.commits.length === 1 ? "" : "s"}` : "A newer version is available"}{" "}
+                  (<code>{shortSha(check.latest.commit)}</code>){check.commits.length ? ":" : "."}
+                </p>
+                <ul className="mt-2 list-disc ml-5 space-y-1">
+                  {check.commits.map((c) => (
+                    <li key={c.commit}>
+                      {c.subject} <span className="text-stone-400">— {new Date(c.date).toLocaleDateString()}</span>
+                    </li>
+                  ))}
+                </ul>
+                {check.installerChanged && (
+                  <p className="mt-3 text-amber-800">
+                    This update also changes the server setup (<code>deploy/install.sh</code>). Install it here, then re-run the
+                    installer on the server to apply those changes too.
+                  </p>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+      </div>
 
       {status && status.state !== "idle" && (
         <section className="panel p-5 text-sm">
@@ -603,7 +648,7 @@ function Updates() {
               Reload the portal
             </button>
           )}
-          {status.log.length > 0 && <pre className="mt-3 bg-mist p-3 rounded-lg text-xs overflow-auto max-h-80">{status.log.join("\n")}</pre>}
+          {status.log.length > 0 && <pre className="mt-3 bg-mist p-3 rounded-lg text-xs overflow-auto max-h-[32rem]">{status.log.join("\n")}</pre>}
         </section>
       )}
     </div>

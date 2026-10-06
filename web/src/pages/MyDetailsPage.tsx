@@ -29,34 +29,36 @@ export function MyDetailsPage() {
 
   const sections = ["personal", "contact", "address", "social", "custom"];
   return (
-    <div className="max-w-2xl">
+    <div>
       <PageHeader
         kicker="You"
         title="My Details"
         description="You can change only the fields your administrators have unlocked. Directory-managed fields stay read-only."
       />
-      {sections.map((section) => {
-        const fields = data.fields.filter((f) => f.section === section);
-        if (!fields.length) return null;
-        return (
-          <div key={section} className="mt-6 panel p-5">
-            <h2 className="font-medium capitalize mb-3">{section}</h2>
-            <div className="grid gap-3">
-              {fields.map((f) => (
-                <label key={f.key} className="text-sm">
-                  {f.label}
-                  <input
-                    className="input mt-1 disabled:bg-mist"
-                    disabled={!f.userEditable}
-                    value={draft[f.key] ?? ""}
-                    onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
-                  />
-                </label>
-              ))}
+      <div className="mt-6 grid gap-6 xl:grid-cols-2 items-start">
+        {sections.map((section) => {
+          const fields = data.fields.filter((f) => f.section === section);
+          if (!fields.length) return null;
+          return (
+            <div key={section} className="panel p-5">
+              <h2 className="font-medium capitalize mb-3">{section}</h2>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {fields.map((f) => (
+                  <label key={f.key} className="text-sm">
+                    {f.label}
+                    <input
+                      className="input mt-1 disabled:bg-mist"
+                      disabled={!f.userEditable}
+                      value={draft[f.key] ?? ""}
+                      onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+                    />
+                  </label>
+                ))}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
       <button
         className="mt-6 btn btn-primary"
         onClick={async () => {

@@ -55,7 +55,7 @@ export function RulesPage() {
           </button>
         ))}
       </div>
-      <div className="mt-6 panel p-6 max-w-3xl space-y-4">
+      <div className="mt-6 panel p-6 max-w-5xl space-y-4">
         {tab === "overview" && (
           <>
             <label className="flex items-center gap-2">
