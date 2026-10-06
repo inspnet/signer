@@ -605,14 +605,33 @@ export function registerApi(app: FastifyInstance): void {
   });
 
   app.get("/api/mail-flow", async (req, reply) => {
-    if (!requireRole(["admin"], req, reply)) return;
+    const admin = requireRole(["admin"], req, reply);
+    if (!admin) return;
     const host = config.smtp.hostname;
     const header = config.processedHeader;
     const publicHost = new URL(config.publicUrl).host;
     const ip = await detectPublicIPv4();
     const signerIp = ip.address ?? "<this server's public IPv4>";
+    const rule = "Identify messages to send to Signer";
+    const ps = {
+      smartHost: `$smartHost = "${host}"`,
+      signerIp: `$signerIp  = "${signerIp}"`,
+      header: `$header    = "${header}"`,
+      outbound: `New-OutboundConnector -Name "Signer send" -ConnectorType OnPremises -UseMXRecord $false -SmartHosts $smartHost -TlsSettings DomainValidation -TlsDomain $smartHost -IsTransportRuleScoped $true -CloudServicesMailEnabled $true -Enabled $true`,
+      inbound: `New-InboundConnector -Name "Signer receive" -ConnectorType OnPremises -SenderDomains * -SenderIPAddresses $signerIp -RequireTls $true -CloudServicesMailEnabled $true -Enabled $true`,
+      rule: `New-TransportRule -Name "${rule}" -FromScope InOrganization -ExceptIfHeaderContainsMessageHeader $header -ExceptIfHeaderContainsWords "true" -RouteMessageOutboundConnector "Signer send" -Enabled $false`,
+      pilot: [`Set-TransportRule -Identity "${rule}" -From "pilot.user@yourdomain.com"`, `Enable-TransportRule -Identity "${rule}"`],
+      live: `Set-TransportRule -Identity "${rule}" -From $null`,
+      rollback: `Disable-TransportRule -Identity "${rule}" -Confirm:$false`
+    };
+    const isGoogle = /(^|\.)gmail\.com$|google/i.test(config.upstream.host);
     return {
       publicIp: ip,
+      provider: isGoogle ? "google" : "microsoft",
+      smtp: { host, port: 25 },
+      returnPath: perDomainMx()
+        ? "Each domain's own MX"
+        : config.upstream.host || "UPSTREAM_HOST is not set",
       microsoft: {
         sendConnector: {
           name: "Signer send",
@@ -642,27 +661,57 @@ export function registerApi(app: FastifyInstance): void {
           // Created disabled: pilot it on one mailbox before every sender goes through Signer.
           enabled: false
         },
+        // Each step's block runs on its own, so it sets the variables it uses.
+        steps: [
+          {
+            title: "Connect to Exchange Online",
+            detail: "In PowerShell 7, signed in as an Exchange administrator. Install the module once.",
+            commands: ["Install-Module ExchangeOnlineManagement -Scope CurrentUser", `Connect-ExchangeOnline -UserPrincipalName ${admin.email}`]
+          },
+          {
+            title: "Outbound connector: Microsoft 365 → Signer",
+            detail: `Delivers to ${host} on port 25 and checks its certificate. Only used when the transport rule sends mail to it.`,
+            commands: [ps.smartHost, ps.outbound]
+          },
+          {
+            title: "Inbound connector: Signer → Microsoft 365",
+            detail: `Recognises this server by ${signerIp}, so Exchange relays signed mail on to outside recipients. If PowerShell warns that it was created disabled, Microsoft support has to enable it.`,
+            commands: [ps.signerIp, ps.inbound]
+          },
+          {
+            title: "Transport rule, created off",
+            detail: "Sends mail from people in your organisation to Signer, unless it has already been signed. Nothing changes until you turn it on.",
+            commands: [ps.header, ps.rule]
+          },
+          {
+            title: "Pilot on one mailbox",
+            detail: "Run the return-path test first. Then turn the rule on for one person and check that their mail arrives signed.",
+            commands: ps.pilot
+          },
+          { title: "Go live", detail: "Remove the pilot condition so every sender goes through Signer.", commands: [ps.live] },
+          { title: "Roll back, if you need to", detail: "Mail stops going through Signer straight away.", commands: [ps.rollback] }
+        ],
+        // The whole script in one block, for copying in one go.
         powershell: [
-          `$smartHost = "${host}"`,
-          `$signerIp  = "${signerIp}"`,
-          `$header    = "${header}"`,
+          ps.smartHost,
+          ps.signerIp,
+          ps.header,
           ``,
-          `New-OutboundConnector -Name "Signer send" -ConnectorType OnPremises -UseMXRecord $false -SmartHosts $smartHost -TlsSettings DomainValidation -TlsDomain $smartHost -IsTransportRuleScoped $true -CloudServicesMailEnabled $true -Enabled $true`,
+          ps.outbound,
           ``,
-          `New-InboundConnector -Name "Signer receive" -ConnectorType OnPremises -SenderDomains * -SenderIPAddresses $signerIp -RequireTls $true -CloudServicesMailEnabled $true -Enabled $true`,
+          ps.inbound,
           ``,
           `# Created disabled, so no mail goes through Signer yet.`,
-          `New-TransportRule -Name "Identify messages to send to Signer" -FromScope InOrganization -ExceptIfHeaderContainsMessageHeader $header -ExceptIfHeaderContainsWords "true" -RouteMessageOutboundConnector "Signer send" -Enabled $false`,
+          ps.rule,
           ``,
           `# Pilot: turn it on for one mailbox only.`,
-          `Set-TransportRule -Identity "Identify messages to send to Signer" -From "pilot.user@yourdomain.com"`,
-          `Enable-TransportRule -Identity "Identify messages to send to Signer"`,
+          ...ps.pilot,
           ``,
           `# Go live: remove the pilot condition so it applies to every sender.`,
-          `Set-TransportRule -Identity "Identify messages to send to Signer" -From $null`,
+          ps.live,
           ``,
           `# Roll back at any time: mail stops going through Signer straight away.`,
-          `Disable-TransportRule -Identity "Identify messages to send to Signer" -Confirm:$false`
+          ps.rollback
         ].join("\n")
       },
       google: {

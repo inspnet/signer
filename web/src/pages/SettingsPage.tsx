@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
 import { api, type AlertConfig, type DirectoryPerson, type RelayDiagnosis, type UpdateCheck, type UpdateStatus } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
 import { useAuth } from "../layouts/Auth";
@@ -30,67 +31,191 @@ export function SettingsPage() {
   );
 }
 
+type MailFlowData = {
+  publicIp: PublicIpInfo;
+  provider: "microsoft" | "google";
+  smtp: { host: string; port: number };
+  returnPath: string;
+  microsoft: { steps: Array<{ title: string; detail: string; commands: string[] }>; powershell: string };
+  google: {
+    hostRoute: { host: string; port: number };
+    smtpRelay: { name: string; allowedSenders: string; auth: string; note: string };
+    contentCompliance: { name: string; affect: string; expression: string; action: string };
+  };
+  spf: string;
+};
+
 function MailFlow() {
-  const [data, setData] = useState<Record<string, unknown> | null>(null);
+  const [data, setData] = useState<MailFlowData | null>(null);
+  const [provider, setProvider] = useState<"microsoft" | "google" | null>(null);
   useEffect(() => {
-    void api.mailFlow().then(setData);
+    void api.mailFlow().then((d) => setData(d as unknown as MailFlowData));
   }, []);
   if (!data) return <p className="mt-4 text-slate-500">Loading…</p>;
-  const ms = data.microsoft as {
-    powershell: string;
-    sendConnector: Record<string, string>;
-    receiveConnector: Record<string, string>;
-    transportRule: Record<string, string>;
-  };
-  const google = data.google as {
-    hostRoute: Record<string, string | number>;
-    smtpRelay: Record<string, string>;
-    contentCompliance: Record<string, string>;
-  };
+  const shown = provider ?? data.provider;
+  const ip = data.publicIp;
+  const ipSource = { config: "set by PUBLIC_IPV4", interface: "from the network interface", dns: "from DNS", none: "" }[ip.source];
+  const g = data.google;
+
   return (
     <div className="mt-6 space-y-6">
-      <div className="grid gap-6 xl:grid-cols-2 items-start">
-        <div className="space-y-4">
-          <p className="text-slate-600 leading-7">{(data.notes as string[]).join(" ")}</p>
-          <PublicIpNote ip={data.publicIp as PublicIpInfo} />
-        </div>
-        <ReturnPathTest />
+      <div className="grid gap-4 md:grid-cols-3">
+        <Fact label="This server sends from" value={ip.address ?? "Unknown"} note={ip.address ? ipSource : "Set PUBLIC_IPV4"} copy={ip.address ?? undefined} />
+        <Fact label="Microsoft / Google deliver to" value={`${data.smtp.host}:${data.smtp.port}`} note="STARTTLS required" copy={data.smtp.host} />
+        <Fact label="Signed mail returns to" value={data.returnPath} note="Microsoft 365 endpoint per domain; see Settings → Domains" />
       </div>
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
-        <section className="panel p-5">
-          <h2 className="font-semibold text-lg">Microsoft 365 / Exchange Online</h2>
-          <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-slate-700">
-            <li>
-              Create an outbound connector to {ms.sendConnector.smartHost} (port 25), validating its TLS certificate, scoped to a
-              transport rule.
-            </li>
-            <li>
-              Create an inbound connector from {ms.receiveConnector.from}, identified by {ms.receiveConnector.identifiedBy.toLowerCase()},
-              requiring TLS.
-            </li>
-            <li>
-              Transport rule: sender inside the organisation, except if header {ms.transportRule.exceptIfHeader} is true, redirect to the
-              Signer send connector. It is created <strong>disabled</strong>: enable it for one pilot mailbox first, check that mail arrives
-              signed, then remove the pilot condition to go live.
-            </li>
-          </ol>
-          <pre className="mt-4 bg-mist p-3 rounded-lg text-xs overflow-auto">{ms.powershell}</pre>
-        </section>
-        <div className="space-y-6">
-          <section className="panel p-5">
-            <h2 className="font-semibold text-lg">Google Workspace</h2>
-            <ol className="list-decimal ml-5 mt-3 text-sm space-y-2 text-slate-700">
-              <li>
-                Hosts: add {String(google.hostRoute.host)} port {String(google.hostRoute.port)}.
-              </li>
-              <li>SMTP relay: {google.smtpRelay.note}</li>
-              <li>Content compliance: {google.contentCompliance.expression}, then change route to Signer with TLS.</li>
+      {ip.warning && <p className="rounded-xl bg-amber-50 text-amber-900 px-4 py-3 text-sm">{ip.warning}</p>}
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px] items-start">
+        <section className="panel p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="tabs !mt-0">
+              {(
+                [
+                  ["microsoft", "Microsoft 365"],
+                  ["google", "Google Workspace"]
+                ] as const
+              ).map(([key, label]) => (
+                <button key={key} className={`tab ${shown === key ? "active" : ""}`} onClick={() => setProvider(key)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {shown === "microsoft" && <CopyButton text={data.microsoft.powershell} label="Copy the whole script" />}
+          </div>
+
+          {shown === "microsoft" ? (
+            <ol className="mt-6 space-y-6">
+              {data.microsoft.steps.map((step, i) => (
+                <Step key={step.title} n={i + 1} title={step.title} detail={step.detail}>
+                  <CodeBlock code={step.commands.join("\n")} />
+                </Step>
+              ))}
             </ol>
+          ) : (
+            <ol className="mt-6 space-y-6">
+              <Step n={1} title="Add Signer as a host" detail="Admin console → Apps → Google Workspace → Gmail → Hosts.">
+                <SettingRows rows={[["Name", "Signer"], ["Host", `${g.hostRoute.host}`], ["Port", String(g.hostRoute.port)], ["Require TLS", "On"]]} />
+              </Step>
+              <Step n={2} title="Let Signer return mail through the SMTP relay" detail="Gmail → Routing → SMTP relay service.">
+                <SettingRows rows={[["Name", g.smtpRelay.name], ["Allowed senders", g.smtpRelay.allowedSenders], ["Authentication", g.smtpRelay.note], ["Encryption", g.smtpRelay.auth]]} />
+              </Step>
+              <Step n={3} title="Route outgoing mail to Signer" detail="Gmail → Compliance → Content compliance.">
+                <SettingRows rows={[["Name", g.contentCompliance.name], ["Messages to affect", g.contentCompliance.affect], ["Expression", g.contentCompliance.expression], ["Action", g.contentCompliance.action]]} />
+              </Step>
+            </ol>
+          )}
+        </section>
+
+        <div className="space-y-6 xl:sticky xl:top-6">
+          <ReturnPathTest />
+          <section className="panel p-5 text-sm">
+            <h2 className="font-semibold text-base">Before you turn it on</h2>
+            <ul className="mt-3 space-y-2.5 text-slate-600 leading-6">
+              <li>
+                <strong className="text-ink">Port 25 open.</strong> Linode blocks outbound mail ports on new accounts until a support
+                ticket lifts it. The return-path test shows whether it is open.
+              </li>
+              <li>
+                <strong className="text-ink">Certificate.</strong> {data.smtp.host} must resolve to this server and have a valid
+                certificate; the install script sets this up.
+              </li>
+              <li>
+                <strong className="text-ink">Nothing leaves your tenant.</strong> Mail is signed here and handed back to Microsoft or
+                Google, which deliver it. {data.spf.replace(/^No SPF change is needed for [^:]+: /, "No SPF or DKIM change is needed: ")}
+              </li>
+            </ul>
           </section>
-          <p className="text-sm text-slate-600 leading-6">{String(data.spf)}</p>
         </div>
       </div>
     </div>
+  );
+}
+
+function Fact({ label, value, note, copy }: { label: string; value: string; note?: string; copy?: string }) {
+  return (
+    <div className="panel p-5 min-w-0">
+      <div className="stat-label">{label}</div>
+      <div className="mt-1 flex items-center gap-2 min-w-0">
+        <span className="font-semibold text-ink text-lg truncate" title={value}>
+          {value}
+        </span>
+        {copy && <CopyButton text={copy} compact />}
+      </div>
+      {note && <div className="mt-0.5 text-xs text-slate-500">{note}</div>}
+    </div>
+  );
+}
+
+function Step({ n, title, detail, children }: { n: number; title: string; detail: string; children: ReactNode }) {
+  return (
+    <li className="grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3">
+      <span className="h-7 w-7 rounded-full bg-sky text-accent-2 text-sm font-semibold grid place-items-center">{n}</span>
+      <div className="min-w-0">
+        <h3 className="font-semibold text-ink leading-7">{title}</h3>
+        <p className="text-sm text-slate-500 leading-6">{detail}</p>
+        <div className="mt-3">{children}</div>
+      </div>
+    </li>
+  );
+}
+
+function CodeBlock({ code }: { code: string }) {
+  return (
+    <div className="relative group rounded-xl bg-[#0f1b3d] text-slate-100">
+      <pre className="p-4 pr-24 text-xs leading-5 font-mono whitespace-pre-wrap [overflow-wrap:anywhere]">{code}</pre>
+      <div className="absolute top-2 right-2">
+        <CopyButton text={code} dark />
+      </div>
+    </div>
+  );
+}
+
+function SettingRows({ rows }: { rows: Array<[string, string]> }) {
+  return (
+    <dl className="rounded-xl border border-line divide-y divide-line text-sm">
+      {rows.map(([k, v]) => (
+        <div key={k} className="grid grid-cols-[10rem_minmax(0,1fr)] gap-3 px-4 py-2.5">
+          <dt className="text-slate-500">{k}</dt>
+          <dd className="text-ink break-words">{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function CopyButton({ text, label = "Copy", compact, dark }: { text: string; label?: string; compact?: boolean; dark?: boolean }) {
+  const [done, setDone] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setDone(true);
+      setTimeout(() => setDone(false), 1500);
+    } catch {
+      /* clipboard blocked: the text is still selectable */
+    }
+  };
+  const Icon = done ? Check : Copy;
+  if (compact) {
+    return (
+      <button type="button" className="text-slate-400 hover:text-accent-2 shrink-0" title={`Copy ${text}`} onClick={() => void copy()}>
+        <Icon size={15} />
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={
+        dark
+          ? "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium bg-white/10 text-slate-100 hover:bg-white/20"
+          : "btn btn-ghost"
+      }
+      onClick={() => void copy()}
+    >
+      <Icon size={14} />
+      {done ? "Copied" : label}
+    </button>
   );
 }
 
@@ -802,26 +927,6 @@ function ReturnHostEditor(props: { domain: string; value: string; onSaved: () =>
 
 type PublicIpInfo = { address: string | null; source: "config" | "interface" | "dns" | "none"; dnsAddresses: string[]; warning?: string };
 
-function PublicIpNote({ ip }: { ip: PublicIpInfo }) {
-  const how = {
-    config: "set by PUBLIC_IPV4",
-    interface: "read from this server's network interface",
-    dns: "from this server's DNS record",
-    none: ""
-  }[ip.source];
-  return (
-    <div className="panel p-4 text-sm">
-      {ip.address ? (
-        <p>
-          This server sends mail from <code className="font-semibold">{ip.address}</code> ({how}). It is filled in below.
-        </p>
-      ) : (
-        <p>This server's public IPv4 could not be determined; replace the placeholder below.</p>
-      )}
-      {ip.warning && <p className="mt-2 text-amber-800">{ip.warning}</p>}
-    </div>
-  );
-}
 
 const STEP_TONE = { ok: "text-emerald-700", warn: "text-amber-800", fail: "text-red-700", skipped: "text-slate-500" } as const;
 const STEP_MARK = { ok: "✓", warn: "!", fail: "✕", skipped: "–" } as const;
@@ -862,10 +967,9 @@ function ReturnPathTest() {
   return (
     <section id="return-path" className="panel p-5">
       <h2 className="font-semibold text-lg">Test the return path</h2>
-      <p className="mt-2 text-sm text-slate-600 leading-6">
-        Connects to where signed mail for the domain goes back to, exactly as a real message would: TLS, sender, then one of your
-        mailboxes and an address outside your organisation. It stops before sending, so nothing is delivered. The outside address
-        is the real test for Microsoft 365: it only accepts it when the &quot;Signer receive&quot; connector recognises this server.
+      <p className="mt-2 text-sm text-slate-500 leading-6">
+        Talks to where the domain&apos;s signed mail goes back to, as a real message would, and stops before sending. The outside
+        address shows whether Microsoft 365 recognises this server.
       </p>
       <form
         className="mt-4 flex flex-wrap gap-2 items-end"
