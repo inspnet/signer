@@ -7,7 +7,7 @@ import { logMail } from "../db/index.js";
 import { processRawMessage } from "../mail/process.js";
 import { getAllowedCidrs, initAllowedCidrs, startRangeRefresh } from "./ipranges.js";
 import { relayTargetFor } from "./route.js";
-import { describeFailure, RelayError } from "./explain.js";
+import { describeFailure, RelayError, sameFailure } from "./explain.js";
 import { noteMailOutcome } from "../alerts/index.js";
 import { messageIdOf, queueSentItemsUpdate } from "../mail/sentitems.js";
 
@@ -227,8 +227,9 @@ async function deliverUnsigned(
   try {
     await relayUpstream(raw, envelopeFrom, envelopeTo);
   } catch (relayErr) {
-    const same = cause instanceof Error && relayErr instanceof Error && cause.message === relayErr.message;
-    const again = same ? "Sending it unsigned failed the same way." : sentence(`Sending it unsigned also failed: ${describeFailure(relayErr)}`);
+    const again = sameFailure(cause, relayErr)
+      ? "Sending it unsigned failed the same way."
+      : sentence(`Sending it unsigned also failed: ${describeFailure(relayErr)}`);
     record({ ...entry(), status: "deferred", detail: `${sentence(why)} ${again} ${RETRY}` });
     throw relayErr;
   }

@@ -111,3 +111,19 @@ export function describeFailure(err: unknown): string {
   const hint = err instanceof RelayError ? err.hint : "";
   return hint ? `${message} — ${hint}` : message;
 }
+
+/**
+ * Two refusals of the same relay are the same failure even when the response
+ * carries a fresh request id or timestamp. Activity and alerts then say it once.
+ */
+export function sameFailure(a: unknown, b: unknown): boolean {
+  const key = (err: unknown) =>
+    describeFailure(err)
+      .replace(/\b\d{4}-\d{2}-\d{2}t[\d:.]+z[0-9a-z]*/gi, "")
+      .replace(/\[[^\]]*\]/g, "")
+      .replace(/\b[0-9a-f]{8,}\b/gi, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  return key(a) === key(b);
+}

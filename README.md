@@ -381,7 +381,7 @@ It needs the Microsoft Graph **Mail.ReadWrite** Application permission on the sa
 2. Under that domain's **Sending keys**, create a key.
 3. In **Settings → Alerts**, enter the domain, its region (US or EU), the key and the recipients, then click **Save and send a test**. Turn alerts on.
 
-The first problem is reported straight away. Later ones are collected into one email per interval (15 minutes by default). One more email follows when mail is flowing again. Alerts carry counts, sender domains and the reasons, with email addresses removed; the full detail stays in **Activity**. Send them to addresses that do not depend on the tenant's own mail flow if you can.
+An alert is sent only after messages have failed to go out for the whole interval (15 minutes by default). A message that is delivered before then, including one delivered without a signature, cancels it. That outage sends one email; another follows when a message is handed back. Alerts carry counts, sender domains and the reasons, with email addresses removed; the full detail stays in **Activity**. Send them to addresses that do not depend on the tenant's own mail flow if you can.
 
 **Logs.** `journalctl -u signer -f`. The journal keeps 14 days, and Nginx's access log is off, so client IP addresses are not kept longer than [PRIVACY.md](PRIVACY.md) states.
 

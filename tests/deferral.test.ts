@@ -89,7 +89,7 @@ describe("when Signer cannot hand mail back", () => {
     expect(mailStats().failed24h).toBeGreaterThanOrEqual(1);
   });
 
-  it("alerts administrators through Mailgun's HTTP API, not the SMTP path that is failing", async () => {
+  it("does not email an alert for one deferred message", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: string | URL) => {
       calls.push(String(input));
@@ -108,7 +108,7 @@ describe("when Signer cannot hand mail back", () => {
       });
       await expect(send()).rejects.toMatchObject({ responseCode: 451 });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(calls).toEqual(["https://api.mailgun.net/v3/mg.example.com/messages"]);
+      expect(calls).toEqual([]);
     } finally {
       alerts.resetAlertState();
       vi.unstubAllGlobals();

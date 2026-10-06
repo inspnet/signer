@@ -3,15 +3,15 @@ import { getSetting, setSetting } from "../db/index.js";
 import { sendMailgun } from "./mailgun.js";
 
 /**
- * Emails administrators when messages are deferred (not handed back, so the
- * provider is holding them) or go out unsigned. Configured under
- * Settings → Alerts and sent through Mailgun's HTTP API, never through
+ * Emails administrators when messages are not being handed back. Configured
+ * under Settings → Alerts and sent through Mailgun's HTTP API, never through
  * Signer's own SMTP path, which is usually what is broken.
  *
- * The first problem is reported straight away. Further problems within the
- * alert interval are collected into the next alert, so a stuck relay sends one
- * email per interval rather than one per message. When mail is flowing again
- * after an alert, one recovery email follows.
+ * A single refusal, or a burst of the same one, does not send mail. An alert
+ * goes out only after messages have failed to send for the whole interval
+ * (15 minutes unless changed) with nothing handed back in between. That outage
+ * sends one email. When a message is delivered again, one recovery email
+ * follows, and a later outage has to last the full interval before another alert.
  *
  * Alerts carry counts, reasons and sender domains. Email addresses in the
  * reasons are replaced with [address]; the full detail stays in Activity.
@@ -33,8 +33,8 @@ type Problem = { at: string; status: "deferred" | "error"; senderDomain: string;
 
 const KEY = "alerts";
 const LAST_KEY = "alerts_last";
-const PROBLEM = new Set(["deferred", "error"]);
-const HEALTHY = new Set(["signed", "passed-through", "loop-prevented"]);
+/** Handed back, including unsigned: the message left, so mail is sending. */
+const DELIVERED = new Set(["signed", "passed-through", "loop-prevented", "error"]);
 const MAX_PENDING = 500;
 
 export function alertSettings(): AlertSettings {
@@ -77,8 +77,9 @@ const redact = (text: string) => text.replace(/[^\s<>"'(),;:]+@[^\s<>"'(),;:]+\.
 
 let pending: Problem[] = [];
 let timer: NodeJS.Timeout | null = null;
-let lastSentAt = 0;
-/** An alert went out and mail has not been seen flowing since. */
+/** When this run of undelivered messages started. 0 while mail is flowing. */
+let outageStartedAt = 0;
+/** This outage already produced its one alert. */
 let alerted = false;
 
 /** For tests. */
@@ -86,7 +87,7 @@ export function resetAlertState(): void {
   pending = [];
   if (timer) clearTimeout(timer);
   timer = null;
-  lastSentAt = 0;
+  outageStartedAt = 0;
   alerted = false;
 }
 
@@ -95,27 +96,41 @@ export function noteMailOutcome(status: string, detail: string, sender: string):
   try {
     const settings = alertSettings();
     if (!settings.enabled || !alertsConfigured(settings)) return;
-    if (PROBLEM.has(status)) {
-      pending.push({
-        at: new Date().toISOString(),
-        status: status as Problem["status"],
-        senderDomain: sender.split("@")[1]?.toLowerCase() || "(no sender)",
-        detail: redact(detail || "No detail recorded").slice(0, 600)
-      });
-      if (pending.length > MAX_PENDING) pending.shift();
-      schedule(settings);
-    } else if (HEALTHY.has(status) && alerted && !pending.length && !timer) {
-      alerted = false;
-      void deliver(settings, "recovery", recoveryMessage(status));
+    if (DELIVERED.has(status)) {
+      clearWait();
+      pending = [];
+      if (alerted) {
+        alerted = false;
+        outageStartedAt = 0;
+        void deliver(settings, "recovery", recoveryMessage(status));
+      } else {
+        outageStartedAt = 0;
+      }
+      return;
     }
+    if (status !== "deferred" || alerted) return;
+    if (!outageStartedAt) outageStartedAt = Date.now();
+    pending.push({
+      at: new Date().toISOString(),
+      status: "deferred",
+      senderDomain: sender.split("@")[1]?.toLowerCase() || "(no sender)",
+      detail: redact(detail || "No detail recorded").slice(0, 600)
+    });
+    if (pending.length > MAX_PENDING) pending.shift();
+    schedule(settings);
   } catch (err) {
     console.error("[signer] Alerting failed", err);
   }
 }
 
+function clearWait(): void {
+  if (timer) clearTimeout(timer);
+  timer = null;
+}
+
 function schedule(settings: AlertSettings): void {
-  if (timer) return;
-  const wait = Math.max(0, lastSentAt + settings.intervalMinutes * 60_000 - Date.now());
+  if (timer || alerted || !outageStartedAt) return;
+  const wait = Math.max(0, outageStartedAt + settings.intervalMinutes * 60_000 - Date.now());
   timer = setTimeout(() => {
     timer = null;
     void flush();
@@ -124,12 +139,19 @@ function schedule(settings: AlertSettings): void {
 }
 
 async function flush(): Promise<void> {
+  const settings = alertSettings();
+  if (!settings.enabled || !alertsConfigured(settings) || !outageStartedAt || !pending.length) {
+    pending = [];
+    outageStartedAt = 0;
+    return;
+  }
+  const due = outageStartedAt + settings.intervalMinutes * 60_000;
+  if (Date.now() < due) {
+    schedule(settings);
+    return;
+  }
   const batch = pending;
   pending = [];
-  if (!batch.length) return;
-  const settings = alertSettings();
-  if (!settings.enabled || !alertsConfigured(settings)) return;
-  lastSentAt = Date.now();
   alerted = true;
   await deliver(settings, "problem", problemMessage(batch, settings));
 }
@@ -159,7 +181,7 @@ export function sendTestAlert(): Promise<AlertResult> {
     text: [
       `This is a test from Signer on ${config.smtp.hostname}.`,
       "",
-      "Alerts like this one are sent when messages are deferred or delivered without a signature.",
+      "An alert like this one is sent only after messages have failed to send for the whole alert interval.",
       settings.enabled ? "Alerts are on." : "Alerts are off: turn them on under Settings → Alerts.",
       "",
       `Settings: ${link("/settings")}`
@@ -171,40 +193,44 @@ function link(path: string): string {
   return `${config.publicUrl.replace(/\/$/, "")}${path}`;
 }
 
-function problemMessage(batch: Problem[], settings: AlertSettings): { subject: string; text: string } {
-  const deferred = batch.filter((p) => p.status === "deferred").length;
-  const unsigned = batch.length - deferred;
-  const parts = [deferred && `${deferred} deferred`, unsigned && `${unsigned} unsigned`].filter(Boolean).join(", ");
-  const subject = `Signer: ${batch.length} message${batch.length === 1 ? "" : "s"} with problems (${parts}) on ${config.smtp.hostname}`;
+/** Request ids and timestamps change on every retry of the same refusal. */
+function reasonKey(detail: string): string {
+  return detail
+    .replace(/\b\d{4}-\d{2}-\d{2}t[\d:.]+z[0-9a-z]*/gi, "")
+    .replace(/\b[0-9a-f]{8,}\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
 
-  const reasons = new Map<string, { count: number; domains: Set<string>; status: Problem["status"] }>();
+function problemMessage(batch: Problem[], settings: AlertSettings): { subject: string; text: string } {
+  const subject = `Signer: mail has not been sending for ${settings.intervalMinutes} minutes on ${config.smtp.hostname}`;
+
+  const reasons = new Map<string, { count: number; domains: Set<string>; detail: string }>();
   for (const p of batch) {
-    const entry = reasons.get(p.detail) ?? { count: 0, domains: new Set<string>(), status: p.status };
+    const key = reasonKey(p.detail);
+    const entry = reasons.get(key) ?? { count: 0, domains: new Set<string>(), detail: p.detail };
     entry.count += 1;
     entry.domains.add(p.senderDomain);
-    reasons.set(p.detail, entry);
+    reasons.set(key, entry);
   }
-  const lines = [...reasons.entries()]
-    .sort((a, b) => b[1].count - a[1].count)
+  const lines = [...reasons.values()]
+    .sort((a, b) => b.count - a.count)
     .slice(0, 10)
-    .map(([detail, r]) => `- ${r.count}× ${r.status === "deferred" ? "Deferred" : "Unsigned"} (from ${[...r.domains].join(", ")}): ${detail}`);
+    .map((r) => `- ${r.count}× Deferred (from ${[...r.domains].join(", ")}): ${r.detail}`);
 
   const text = [
-    `Signer on ${config.smtp.hostname} had problems with ${batch.length} message${batch.length === 1 ? "" : "s"} between ${batch[0]!.at} and ${batch.at(-1)!.at} (UTC).`,
-    "",
-    deferred
-      ? `Deferred: ${deferred}. Not delivered yet: Signer could not hand them back, so Microsoft 365 / Google keep them queued and retry.`
-      : "",
-    unsigned ? `Unsigned: ${unsigned}. Delivered without a signature.` : "",
+    `Signer on ${config.smtp.hostname} has not handed a message back since ${batch[0]!.at} (UTC).`,
+    `${batch.length} message${batch.length === 1 ? "" : "s"} ${batch.length === 1 ? "is" : "are"} still queued at Microsoft 365 or Google, which will retry.`,
     "",
     "Reasons:",
     ...lines,
     reasons.size > 10 ? `- …and ${reasons.size - 10} more in Activity.` : "",
     "",
     `Activity: ${link("/analytics")}`,
-    deferred ? `Test the return path: ${link("/settings#return-path")}` : "",
+    `Test the return path: ${link("/settings#return-path")}`,
     "",
-    `You get at most one alert every ${settings.intervalMinutes} minutes; problems in between go into the next one. Another email follows when mail is flowing again.`
+    `This outage sends one email, after ${settings.intervalMinutes} minutes without a delivered message. Another email follows when a message is handed back.`
   ];
   return { subject, text: text.filter((l, i, all) => l !== "" || all[i - 1] !== "").join("\n") };
 }

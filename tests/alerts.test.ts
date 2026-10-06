@@ -19,6 +19,7 @@ process.env.SMTP_HOSTNAME = "signer.inspired.co";
 
 const db = await import("../src/db/index.js");
 const alerts = await import("../src/alerts/index.js");
+const { sameFailure } = await import("../src/smtp/explain.js");
 const { authPlugin, registerAuthRoutes } = await import("../src/auth/index.js");
 const { registerApi } = await import("../src/routes/api.js");
 
@@ -141,59 +142,81 @@ describe("Settings → Alerts API", () => {
   });
 });
 
-describe("alerting on deferred and unsigned mail", () => {
-  const settle = () => vi.advanceTimersByTimeAsync(0);
+describe("the same relay refusal", () => {
+  it("is one failure when only the request id and timestamp differ", () => {
+    const a =
+      "550 5.7.1 Service unavailable, Client host [2600:3c04::1] blocked using Spamhaus. [HOST 2026-10-06T04:38:21.563Z 08DF22EBF2CE750]";
+    const b =
+      "550 5.7.1 Service unavailable, Client host [2600:3c04::1] blocked using Spamhaus. [HOST 2026-10-06T04:38:22.100Z 08DF22FF746BD5DE]";
+    expect(sameFailure(new Error(a), new Error(b))).toBe(true);
+    expect(sameFailure(new Error(a), new Error("connect ECONNREFUSED 127.0.0.1:25"))).toBe(false);
+  });
+});
 
-  it("alerts on the first problem straight away, then batches until the interval passes", async () => {
+describe("alerting when mail is not sending", () => {
+  const relayDown =
+    "Signed, but handing it back failed: inspired-co.mail.protection.outlook.com:25 (the domain's MX): 550 5.7.1 Service unavailable, Client host [2600:3c04::1] blocked using Spamhaus. [YT1PEPF000001EBB 2026-10-06T04:38:21.563Z 08DF22EBF2CE750] — Microsoft 365 is refusing this server's IP address as a sender.";
+
+  it("stays quiet until messages have failed to send for the whole interval, and counts one refusal once", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     configure();
-    const relayDown =
-      "Signed, but handing it back failed: inspired-co.mail.protection.outlook.com:25 (the domain's MX): Connection timeout — Could not reach it.";
 
     alerts.noteMailOutcome("deferred", relayDown, "scott@inspired.co");
-    await settle();
-    expect(sent).toHaveLength(1);
-    expect(sent[0]!.form.get("subject")).toBe("Signer: 1 message with problems (1 deferred) on signer.inspired.co");
-    const first = sent[0]!.form.get("text")!;
-    expect(first).toContain("1× Deferred (from inspired.co): Signed, but handing it back failed");
-    expect(first).toContain("Test the return path: https://signer.inspired.co/settings#return-path");
-
-    alerts.noteMailOutcome("deferred", relayDown, "ada@inspired.co");
-    alerts.noteMailOutcome("error", "Signing failed: 550 5.1.1 <bob@contoso.example>: Recipient rejected. Delivered without a signature.", "sam@belzbergco.example");
-    alerts.noteMailOutcome("signed", "", "scott@inspired.co"); // problems still waiting: no recovery yet
+    alerts.noteMailOutcome(
+      "deferred",
+      relayDown.replace("08DF22EBF2CE750", "08DF22FF746BD5DE").replace("04:38:21.563Z", "04:38:22.100Z"),
+      "ada@inspired.co"
+    );
     await vi.advanceTimersByTimeAsync(14 * 60_000);
-    expect(sent).toHaveLength(1);
+    expect(sent).toHaveLength(0);
 
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(sent).toHaveLength(2);
-    expect(sent[1]!.form.get("subject")).toBe("Signer: 2 messages with problems (1 deferred, 1 unsigned) on signer.inspired.co");
-    const second = sent[1]!.form.get("text")!;
-    expect(second).toContain("Unsigned (from belzbergco.example): Signing failed: 550 5.1.1 <[address]>");
-    expect(second).not.toContain("bob@contoso.example");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.form.get("subject")).toBe("Signer: mail has not been sending for 15 minutes on signer.inspired.co");
+    const text = sent[0]!.form.get("text")!;
+    expect(text).toContain("2× Deferred (from inspired.co): Signed, but handing it back failed");
+    expect(text.match(/Deferred \(from/g)).toHaveLength(1);
+    expect(text).toContain("Test the return path: https://signer.inspired.co/settings#return-path");
+    expect(text).not.toContain("scott@inspired.co");
   });
 
-  it("sends one recovery email when mail flows again", async () => {
+  it("sends one alert for an outage, then one recovery when a message is delivered", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     configure();
     alerts.noteMailOutcome("deferred", "Connection timeout", "scott@inspired.co");
-    await settle();
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    alerts.noteMailOutcome("deferred", "Connection timeout", "ada@inspired.co");
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(sent).toHaveLength(1);
+
     alerts.noteMailOutcome("signed", "", "scott@inspired.co");
     alerts.noteMailOutcome("signed", "", "ada@inspired.co");
-    await settle();
+    await vi.advanceTimersByTimeAsync(0);
     expect(sent.map((s) => s.form.get("subject"))).toEqual([
-      "Signer: 1 message with problems (1 deferred) on signer.inspired.co",
+      "Signer: mail has not been sending for 15 minutes on signer.inspired.co",
       "Signer: mail is flowing again on signer.inspired.co"
     ]);
+  });
+
+  it("does not alert when a message is delivered before the interval ends", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    configure();
+    alerts.noteMailOutcome("deferred", "Connection timeout", "scott@inspired.co");
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    alerts.noteMailOutcome("passed-through", "No matching signature", "scott@inspired.co");
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(sent).toHaveLength(0);
   });
 
   it("stays quiet when alerts are off, and for healthy mail", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     configure({ enabled: false });
     alerts.noteMailOutcome("deferred", "Connection timeout", "scott@inspired.co");
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
     configure();
     alerts.noteMailOutcome("signed", "", "scott@inspired.co");
     alerts.noteMailOutcome("passed-through", "No matching signature", "scott@inspired.co");
-    await settle();
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
     expect(sent).toHaveLength(0);
   });
 });
