@@ -123,6 +123,14 @@ describe("Microsoft 365 connector instructions", () => {
     expect(microsoft.powershell).not.toContain("RestrictDomainsToIPAddresses $true");
   });
 
+  it("creates the routing rule disabled, with pilot and go-live steps", async () => {
+    const { microsoft } = await mailFlow();
+    const create = microsoft.powershell.split("\n").find((l) => l.startsWith("New-TransportRule"))!;
+    expect(create).toContain("-Enabled $false");
+    expect(microsoft.powershell).toMatch(/Set-TransportRule .* -From "pilot\.user@yourdomain\.com" -Enabled \$true/);
+    expect(microsoft.powershell).toMatch(/Set-TransportRule .* -From \$null/);
+  });
+
   it("validates Signer's certificate and does not advertise a port Exchange cannot use", async () => {
     const { microsoft } = await mailFlow();
     expect(microsoft.powershell).toContain("-TlsSettings DomainValidation -TlsDomain $smartHost");

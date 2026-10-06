@@ -90,10 +90,19 @@ async function main(): Promise<void> {
   setInterval(purge, 60 * 60 * 1000).unref();
 
   if (config.directorySyncMinutes > 0) {
-    const ms = config.directorySyncMinutes * 60 * 1000;
-    setInterval(() => {
-      void syncDirectory().catch((err) => console.error("Directory sync failed", err));
-    }, ms);
+    const sync = () => {
+      void syncDirectory()
+        .then((results) => {
+          for (const r of results) {
+            if (r.error) console.error(`[signer] Directory sync (${r.source}) failed: ${r.error}`);
+            else console.log(`[signer] Directory sync (${r.source}): ${r.users} people, ${r.groups} groups`);
+          }
+        })
+        .catch((err) => console.error("[signer] Directory sync failed", err));
+    };
+    // Once shortly after start, so a restart never leaves the cache a full interval behind.
+    setTimeout(sync, 60 * 1000).unref();
+    setInterval(sync, config.directorySyncMinutes * 60 * 1000).unref();
   }
 }
 

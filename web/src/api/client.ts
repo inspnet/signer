@@ -109,7 +109,16 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export type DomainRecord = { name: string; primary: boolean; addedAt: string; addedBy: string };
+export type ReturnRoute = { host: string; via: "override" | "mx" | "default"; detail: string };
+
+export type DomainRecord = {
+  name: string;
+  primary: boolean;
+  addedAt: string;
+  addedBy: string;
+  returnHost: string;
+  route?: ReturnRoute;
+};
 
 export type Version = { commit: string; date: string; subject: string; branch: string; remote: string };
 
@@ -170,6 +179,10 @@ export const api = {
   folders: () => request<Array<{ id: string; name: string }>>("/api/folders"),
   createFolder: (name: string) => request("/api/folders", { method: "POST", body: JSON.stringify({ name }) }),
   tester: (body: { from: string; to: string; subject?: string; body?: string }) => request("/api/tester", { method: "POST", body: JSON.stringify(body) }),
+  sendTest: (body: { from: string; to: string; subject?: string; body?: string }) =>
+    request<{ ok: boolean; sentTo: string; signature: string | null }>("/api/tester/send", { method: "POST", body: JSON.stringify(body) }),
+  saveUserDetails: (email: string, body: Record<string, string>) =>
+    request<DirectoryPerson>(`/api/directory/users/${encodeURIComponent(email)}`, { method: "PUT", body: JSON.stringify(body) }),
   users: () => request<DirectoryPerson[]>("/api/users"),
   groups: () => request<Array<{ id: string; name: string; email: string }>>("/api/groups"),
   sync: () => request("/api/directory/sync", { method: "POST", body: "{}" }),
@@ -186,7 +199,18 @@ export const api = {
   settings: () => request<Record<string, unknown>>("/api/settings"),
   saveSettings: (body: object) => request("/api/settings", { method: "PUT", body: JSON.stringify(body) }),
   mailFlow: () => request<Record<string, unknown>>("/api/mail-flow"),
-  domains: () => request<{ domains: DomainRecord[]; suggestions: Array<{ domain: string; people: number }> }>("/api/domains"),
+  domains: () =>
+    request<{
+      domains: DomainRecord[];
+      suggestions: Array<{ domain: string; people: number }>;
+      perDomainMx: boolean;
+      upstreamHost: string;
+    }>("/api/domains"),
+  setDomainReturnHost: (name: string, host: string) =>
+    request<{ ok: boolean; route: ReturnRoute }>(`/api/domains/${encodeURIComponent(name)}/return-host`, {
+      method: "PUT",
+      body: JSON.stringify({ host })
+    }),
   addDomain: (name: string) => request<DomainRecord>("/api/domains", { method: "POST", body: JSON.stringify({ name }) }),
   removeDomain: (name: string) => request(`/api/domains/${encodeURIComponent(name)}`, { method: "DELETE" }),
   makePrimaryDomain: (name: string) => request(`/api/domains/${encodeURIComponent(name)}/primary`, { method: "PUT", body: "{}" }),

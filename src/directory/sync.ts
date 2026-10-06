@@ -256,7 +256,22 @@ export async function syncGoogle(): Promise<SyncResult> {
   return { users: users.length, groups: groups.length, removed, source: "google" };
 }
 
-export async function syncDirectory(): Promise<SyncResult[]> {
+let running: Promise<SyncResult[]> | null = null;
+
+/**
+ * Sync every configured directory. A sync already in progress (the hourly
+ * timer, or an admin pressing Synchronise) is joined rather than run twice.
+ */
+export function syncDirectory(): Promise<SyncResult[]> {
+  if (!running) {
+    running = runSync().finally(() => {
+      running = null;
+    });
+  }
+  return running;
+}
+
+async function runSync(): Promise<SyncResult[]> {
   const results: SyncResult[] = [];
   if (entraConfigured()) {
     try {

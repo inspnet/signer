@@ -19,10 +19,10 @@ const nav = [
   { to: "/signatures", label: "Signatures", icon: LayoutTemplate, end: false },
   { to: "/campaigns", label: "Campaigns", icon: Image, end: false },
   { to: "/disclaimers", label: "Disclaimers", icon: Shield, end: false },
-  { to: "/tester", label: "Rule tester", icon: Sparkles, end: false },
+  { to: "/tester", label: "Rule Tester", icon: Sparkles, end: false },
   { to: "/analytics", label: "Activity", icon: BarChart3, end: false },
-  { to: "/me", label: "My details", icon: UserRound, end: false },
-  { to: "/settings", label: "Mail flow", icon: Settings, end: false }
+  { to: "/me", label: "My Details", icon: UserRound, end: false },
+  { to: "/settings", label: "Settings", icon: Settings, end: false }
 ];
 
 export function AppShell() {

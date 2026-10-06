@@ -18,7 +18,7 @@ export function MyDetailsPage() {
   if (!data.user) {
     return (
       <div>
-        <PageHeader kicker="You" title="My details" />
+        <PageHeader kicker="You" title="My Details" />
         <p className="mt-3 text-stone-600">
           Your account is not in the cached directory yet. Ask an admin to run a directory sync, or sign in with the same email as your
           mailbox.
@@ -32,7 +32,7 @@ export function MyDetailsPage() {
     <div className="max-w-2xl">
       <PageHeader
         kicker="You"
-        title="My details"
+        title="My Details"
         description="You can change only the fields your administrators have unlocked. Directory-managed fields stay read-only."
       />
       {sections.map((section) => {

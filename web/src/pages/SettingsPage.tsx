@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type UpdateCheck, type UpdateStatus } from "../api/client";
+import { api, type DirectoryPerson, type UpdateCheck, type UpdateStatus } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
 
 export function SettingsPage() {
@@ -8,7 +8,7 @@ export function SettingsPage() {
     <div>
       <PageHeader
         kicker="Admin"
-        title="Mail flow"
+        title="Settings"
         description="Connectors, domains, directory cache, who may edit their own card, and updates."
       />
       <div className="tabs">
@@ -61,7 +61,8 @@ function MailFlow() {
           </li>
           <li>
             Transport rule: sender inside the organisation, except if header {ms.transportRule.exceptIfHeader} is true, redirect to the
-            Signer send connector.
+            Signer send connector. It is created <strong>disabled</strong>: enable it for one pilot mailbox first, check that mail arrives
+            signed, then remove the pilot condition to go live.
           </li>
         </ol>
         <pre className="mt-4 bg-mist p-3 rounded-lg text-xs overflow-auto">{ms.powershell}</pre>
@@ -82,51 +83,178 @@ function MailFlow() {
 }
 
 function Directory() {
-  const [users, setUsers] = useState<Awaited<ReturnType<typeof api.users>>>([]);
+  const [users, setUsers] = useState<DirectoryPerson[]>([]);
+  const [fields, setFields] = useState<Awaited<ReturnType<typeof api.fields>>>([]);
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<DirectoryPerson | null>(null);
   const [status, setStatus] = useState("");
   useEffect(() => {
     void api.users().then(setUsers);
+    void api.fields().then(setFields);
   }, []);
+
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? users.filter((u) =>
+        [u.displayName, u.email, u.jobTitle, u.department].some((v) => String(v ?? "").toLowerCase().includes(q))
+      )
+    : users;
+
   return (
-    <div className="mt-6">
-      <button
-        className="btn btn-primary"
-        onClick={async () => {
-          setStatus("Syncing…");
+    <div className="mt-6 space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          className="btn btn-primary"
+          onClick={async () => {
+            setStatus("Syncing…");
+            try {
+              const res = (await api.sync()) as Array<{ source: string; users: number; groups: number; removed?: number; error?: string }>;
+              setStatus(
+                res.length
+                  ? res
+                      .map((r) =>
+                        r.error
+                          ? `${r.source}: ${r.error}`
+                          : `${r.source}: ${r.users} people, ${r.groups} groups${r.removed ? `, ${r.removed} removed` : ""}`
+                      )
+                      .join(" · ")
+                  : "No directory is configured."
+              );
+              setUsers(await api.users());
+            } catch (err) {
+              setStatus(err instanceof Error ? err.message : String(err));
+            }
+          }}
+        >
+          Synchronise Entra / Google
+        </button>
+        <input
+          className="input max-w-sm"
+          placeholder="Search name, email, title or department"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <span className="text-sm text-stone-500">
+          {shown.length} of {users.length}
+        </span>
+      </div>
+      {status && <p className="text-sm text-stone-600">{status}</p>}
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="panel overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-mist text-left text-stone-500">
+              <tr>
+                <th className="p-3 font-medium">Name</th>
+                <th className="font-medium">Email</th>
+                <th className="font-medium">Title</th>
+                <th className="font-medium">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((u) => (
+                <tr
+                  key={u.id}
+                  className={`border-t border-line cursor-pointer hover:bg-mist ${selected?.id === u.id ? "bg-mist" : ""}`}
+                  onClick={() => setSelected(u)}
+                >
+                  <td className="p-3">
+                    {u.displayName}
+                    {u.enabled === 0 && <span className="ml-2 text-xs text-stone-400">disabled</span>}
+                  </td>
+                  <td>{u.email}</td>
+                  <td>{u.jobTitle}</td>
+                  <td className="capitalize">{String(u.source ?? "")}</td>
+                </tr>
+              ))}
+              {!shown.length && (
+                <tr>
+                  <td className="p-3 text-stone-500" colSpan={4}>
+                    {users.length ? "Nobody matches that search." : "Nobody yet: run a directory sync."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {selected && (
+          <PersonEditor
+            key={selected.id}
+            person={selected}
+            fields={fields}
+            onSaved={(saved) => {
+              setUsers(users.map((u) => (u.id === saved.id ? saved : u)));
+              setSelected(saved);
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PersonEditor(props: {
+  person: DirectoryPerson;
+  fields: Awaited<ReturnType<typeof api.fields>>;
+  onSaved: (person: DirectoryPerson) => void;
+}) {
+  const { person, fields } = props;
+  const editable = fields.filter((f) => !f.directory);
+  const fromDirectory = fields.filter((f) => f.directory);
+  const [draft, setDraft] = useState<Record<string, string>>(() =>
+    Object.fromEntries(editable.map((f) => [f.key, String(person[f.key] ?? "")]))
+  );
+  const [message, setMessage] = useState("");
+  return (
+    <div className="panel p-5 text-sm space-y-4 self-start">
+      <div>
+        <h2 className="font-semibold text-lg">{person.displayName}</h2>
+        <p className="text-stone-500">{person.email}</p>
+      </div>
+      <div>
+        <h3 className="font-medium">
+          From {person.source === "google" ? "Google Workspace" : person.source === "entra" ? "Entra ID" : "the directory"}
+        </h3>
+        <p className="text-xs text-stone-500 mb-2">Read-only here. Change these in the directory; the next sync picks them up.</p>
+        <dl className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-1">
+          {fromDirectory.map((f) => (
+            <div key={f.key} className="contents">
+              <dt className="text-stone-500">{f.label}</dt>
+              <dd>{String(person[f.key] ?? "") || <span className="text-stone-300">—</span>}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+      <form
+        className="space-y-2"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setMessage("");
           try {
-            const res = await api.sync();
-            setStatus(JSON.stringify(res));
-            setUsers(await api.users());
+            const saved = await api.saveUserDetails(person.email, draft);
+            props.onSaved(saved);
+            setMessage("Saved. The next email from this person uses these values.");
           } catch (err) {
-            setStatus(err instanceof Error ? err.message : String(err));
+            setMessage(err instanceof Error ? err.message : String(err));
           }
         }}
       >
-        Synchronise Entra / Google
-      </button>
-      {status && <p className="text-sm mt-2 text-stone-600">{status}</p>}
-      <div className="mt-4 panel overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-mist text-left text-stone-500">
-            <tr>
-              <th className="p-3 font-medium">Name</th>
-              <th className="font-medium">Email</th>
-              <th className="font-medium">Title</th>
-              <th className="font-medium">Source</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id} className="border-t border-line">
-                <td className="p-3">{u.displayName}</td>
-                <td>{u.email}</td>
-                <td>{u.jobTitle}</td>
-                <td>{u.domain}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+        <h3 className="font-medium">Signature details</h3>
+        {editable.map((f) => (
+          <label key={f.key} className="block">
+            <span className="text-stone-600">
+              {f.label}
+              {f.userEditable && <span className="ml-1 text-xs text-stone-400">(they can edit this too)</span>}
+            </span>
+            <input
+              className="input mt-1"
+              value={draft[f.key] ?? ""}
+              onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+            />
+          </label>
+        ))}
+        <button className="btn btn-primary">Save</button>
+        {message && <p className="text-stone-600">{message}</p>}
+      </form>
     </div>
   );
 }
@@ -232,6 +360,20 @@ function Domains() {
         count as <strong>internal</strong> in rules. The connectors and routing rules already cover every domain in the
         tenant, so adding a domain here needs no change in Exchange or Google.
       </p>
+      <p className="text-sm text-stone-600 leading-6">
+        {data.perDomainMx ? (
+          <>
+            Signed mail goes back to each domain&apos;s own Microsoft 365 endpoint, found from its MX record. A domain whose MX is
+            not Microsoft 365 (a filtering service, for example) uses <code>{data.upstreamHost}</code> from setup unless you set a
+            return host for it.
+          </>
+        ) : (
+          <>
+            Signed mail goes back through <code>{data.upstreamHost || "UPSTREAM_HOST (not set)"}</code> for every domain, unless you
+            set a return host for a domain.
+          </>
+        )}
+      </p>
       <form
         className="flex gap-2"
         onSubmit={(e) => {
@@ -250,13 +392,24 @@ function Domains() {
       {error && <p className="text-sm text-red-700">{error}</p>}
       <ul className="panel divide-y divide-line">
         {data.domains.map((d) => (
-          <li key={d.name} className="p-3 flex items-center justify-between text-sm">
-            <span>
+          <li key={d.name} className="p-3 flex items-start justify-between gap-4 text-sm">
+            <span className="min-w-0">
               <strong>{d.name}</strong>
               {d.primary && <span className="ml-2 rounded bg-mist px-2 py-0.5 text-xs text-stone-600">Primary</span>}
+              {d.route && (
+                <span className="block text-xs text-stone-500 mt-1">
+                  Returns to <code>{d.route.host || "(nowhere: UPSTREAM_HOST is not set)"}</code> · {d.route.detail}
+                </span>
+              )}
+              <ReturnHostEditor
+                domain={d.name}
+                value={d.returnHost}
+                onSaved={() => void load()}
+                onError={setError}
+              />
             </span>
             {!d.primary && (
-              <span className="flex gap-2">
+              <span className="flex gap-2 shrink-0">
                 <button className="btn btn-ghost" onClick={() => void act(() => api.makePrimaryDomain(d.name))}>
                   Make primary
                 </button>
@@ -452,5 +605,48 @@ function Updates() {
         </section>
       )}
     </div>
+  );
+}
+
+function ReturnHostEditor(props: { domain: string; value: string; onSaved: () => void; onError: (message: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [host, setHost] = useState(props.value);
+  if (!open) {
+    return (
+      <button className="block mt-1 text-xs text-teal-800 underline" onClick={() => setOpen(true)}>
+        {props.value ? "Change return host" : "Set a return host"}
+      </button>
+    );
+  }
+  const save = async (value: string) => {
+    try {
+      await api.setDomainReturnHost(props.domain, value);
+      setOpen(false);
+      props.onSaved();
+    } catch (err) {
+      props.onError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  return (
+    <form
+      className="mt-2 flex gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save(host);
+      }}
+    >
+      <input
+        className="input text-xs py-1"
+        placeholder="contoso-com.mail.protection.outlook.com"
+        value={host}
+        onChange={(e) => setHost(e.target.value)}
+      />
+      <button className="btn btn-ghost text-xs">Save</button>
+      {props.value && (
+        <button type="button" className="btn btn-ghost text-xs" onClick={() => void save("")}>
+          Use automatic
+        </button>
+      )}
+    </form>
   );
 }

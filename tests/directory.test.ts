@@ -14,7 +14,7 @@ process.env.ENTRA_CLIENT_ID = "client";
 process.env.ENTRA_CLIENT_SECRET = "secret";
 
 const db = await import("../src/db/index.js");
-const { syncEntra } = await import("../src/directory/sync.js");
+const { syncEntra, syncDirectory } = await import("../src/directory/sync.js");
 
 type GraphUser = { id: string; mail: string; displayName: string; userType?: string };
 
@@ -54,7 +54,7 @@ afterAll(() => db.closeDb());
 
 describe("Entra directory sync", () => {
   it("takes over the super admin's placeholder instead of failing on the duplicate email", async () => {
-    // Before any sync, the super admin has a placeholder so they can sign in and edit My details.
+    // Before any sync, the super admin has a placeholder so they can sign in and edit My Details.
     expect(rowsFor("admin@contoso.com").map((r) => r.id)).toEqual(["u-superadmin"]);
     db.setUserOverrides("admin@contoso.com", { pronouns: "they/them" });
 
@@ -68,7 +68,7 @@ describe("Entra directory sync", () => {
     expect(rowsFor("admin@contoso.com").map((r) => r.id)).toEqual(["entra:a1"]);
     const admin = db.getUserByEmail("admin@contoso.com")!;
     expect(admin.displayName).toBe("Alex Admin");
-    // What they saved under My details survives the takeover.
+    // What they saved under My Details survives the takeover.
     const overrides = db.getDb().prepare("SELECT overrides_json FROM users WHERE id = 'entra:a1'").get() as {
       overrides_json: string;
     };
@@ -104,6 +104,15 @@ describe("Entra directory sync", () => {
     const result = await syncEntra();
     expect(result.users).toBe(1);
     expect(db.getUserByEmail("partner@fabrikam.example")).toBeNull();
+  });
+
+  it("joins a sync already in progress instead of running two at once", async () => {
+    stubGraph([{ id: "b2", mail: "bob@contoso.com", displayName: "Bob" }]);
+    const first = syncDirectory();
+    const second = syncDirectory();
+    expect(second).toBe(first);
+    await first;
+    expect(syncDirectory()).not.toBe(first);
   });
 
   it("explains missing Application permissions", async () => {

@@ -314,6 +314,12 @@ function migrate(d: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_users_domain ON users(domain);
   `);
 
+  // Added after the domains table shipped: an optional per-domain return host.
+  const domainColumns = (d.prepare("PRAGMA table_info(domains)").all() as { name: string }[]).map((c) => c.name);
+  if (!domainColumns.includes("return_host")) {
+    d.exec("ALTER TABLE domains ADD COLUMN return_host TEXT NOT NULL DEFAULT ''");
+  }
+
   const existingFields = new Set(
     (d.prepare("SELECT field_key FROM field_permissions").all() as { field_key: string }[]).map((r) => r.field_key)
   );
@@ -558,7 +564,7 @@ export function upsertDirectoryUser(user: DirectoryUser, preserveOverrides = tru
     // super admin's placeholder created before the first sync, or an account
     // deleted and re-created in the directory. Email is unique, so take that
     // row over instead of failing the whole sync, and keep what the person
-    // saved under My details.
+    // saved under My Details.
     const sameEmail = d.prepare("SELECT id, overrides_json FROM users WHERE email = ? AND id != ?").get(user.email, user.id) as
       | { id: string; overrides_json: string }
       | undefined;
@@ -918,7 +924,7 @@ export function saveFolder(name: string, id?: string): FolderRecord {
 // one Microsoft 365 or Google Workspace tenant, which can own several domains.
 // Senders on these domains are signed; recipients on them count as internal.
 
-export type DomainRecord = { name: string; primary: boolean; addedAt: string; addedBy: string };
+export type DomainRecord = { name: string; primary: boolean; addedAt: string; addedBy: string; returnHost: string };
 
 export class DomainError extends Error {}
 
@@ -961,9 +967,32 @@ function seedDomains(d: Database.Database): void {
 export function listDomains(): DomainRecord[] {
   return (
     getDb()
-      .prepare("SELECT name, is_primary, added_at, added_by FROM domains ORDER BY is_primary DESC, name ASC")
-      .all() as { name: string; is_primary: number; added_at: string; added_by: string }[]
-  ).map((r) => ({ name: r.name, primary: r.is_primary === 1, addedAt: r.added_at, addedBy: r.added_by }));
+      .prepare("SELECT name, is_primary, added_at, added_by, return_host FROM domains ORDER BY is_primary DESC, name ASC")
+      .all() as { name: string; is_primary: number; added_at: string; added_by: string; return_host: string }[]
+  ).map((r) => ({
+    name: r.name,
+    primary: r.is_primary === 1,
+    addedAt: r.added_at,
+    addedBy: r.added_by,
+    returnHost: r.return_host
+  }));
+}
+
+/** The return host an admin set for this domain, or "" to use the automatic route. */
+export function domainReturnHost(name: string): string {
+  const row = getDb().prepare("SELECT return_host FROM domains WHERE name = ?").get(name.toLowerCase()) as
+    | { return_host: string }
+    | undefined;
+  return row?.return_host ?? "";
+}
+
+export function setDomainReturnHost(input: string, host: string): void {
+  const name = normalizeDomain(input);
+  const exists = name ? getDb().prepare("SELECT 1 FROM domains WHERE name = ?").get(name) : undefined;
+  if (!exists) throw new DomainError(`${input} is not in the domain list.`);
+  const value = host.trim().toLowerCase().replace(/\.$/, "");
+  if (value && !normalizeDomain(value)) throw new DomainError(`"${host}" is not a valid host name.`);
+  getDb().prepare("UPDATE domains SET return_host = ? WHERE name = ?").run(value, name);
 }
 
 export function domainNames(): string[] {
