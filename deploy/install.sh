@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Signer installer for a fresh Ubuntu 24.04 (or 22.04) server, e.g. a Linode.
+# Signer installer for a fresh Ubuntu 24.04 (or 22.04) server on a host that allows outbound port 25.
 #
 # Log in as root (or a sudo user) and run:
 #
@@ -359,7 +359,7 @@ Stop it (for Postfix: systemctl disable --now postfix) and re-run."
   fi
 
   # ------------------------------------------------------------------------
-  say "Outbound SMTP (Linode blocks this on new accounts until support lifts it)"
+  say "Outbound SMTP (many hosts, Linode included, block this until support lifts it)"
   local outbound=open
   if [ -n "$UPSTREAM_HOST" ]; then
     if timeout 8 bash -c "exec 3<>/dev/tcp/${UPSTREAM_HOST}/${UPSTREAM_PORT:-25}" 2> /dev/null; then
@@ -387,9 +387,9 @@ EOF
   if [ ! -f "$TLS_DIR/fullchain.pem" ]; then
     echo "      ${step}. DNS A record ${DOMAIN} → ${ipv4}, then re-run this script for the certificate."; step=$((step + 1))
   fi
-  echo "      ${step}. Linode Cloud Manager → this Linode → Network: set reverse DNS of both IPs to ${DOMAIN}."; step=$((step + 1))
+  echo "      ${step}. In your provider's control panel, set reverse DNS of both IPs to ${DOMAIN} (Linode: Cloud Manager → Network)."; step=$((step + 1))
   if [ "$outbound" = blocked ]; then
-    echo "      ${step}. Open a Linode support ticket to lift the SMTP restriction, then re-run to check."; step=$((step + 1))
+    echo "      ${step}. Ask your provider to lift the outbound SMTP restriction (Linode: a support ticket), then re-run to check."; step=$((step + 1))
   fi
   if [ -z "$(env_get ENTRA_CLIENT_ID)" ] && [ -z "$(env_get GOOGLE_CLIENT_ID)" ]; then
     echo "      ${step}. Add Entra or Google sign-in details to ${ENV_FILE} and restart Signer."; step=$((step + 1))
