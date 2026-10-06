@@ -436,7 +436,7 @@ docker compose logs -f --tail=80
 
 - **Signatures** — create, folders, evaluation order, block designer, HTML fields from the directory
 - **Rules** — senders, exceptions, groups/domains, internal vs external recipients, date/time with a per-rule timezone, reply/thread advanced rules
-- **Disclaimers** — separate legal notices (e.g. external-only confidentiality)
+- **Disclaimers** — separate legal notices with the same rules as signatures: sender domain (for example, a different legal entity per domain), group or address, exceptions, recipients (external only), schedule and subject or reply conditions. Unlike signatures, where the first match wins, every disclaimer whose rules match is added
 - **Campaigns** — banner images with the same rule engine
 - **Rule Tester** — dry-run with per-rule pass/fail, plus **Send test**, which emails the result to your own mailbox
 - **User details** — employees edit only admin-unlocked fields

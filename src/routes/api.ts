@@ -453,6 +453,14 @@ export function registerApi(app: FastifyInstance): void {
     };
   });
 
+  // Names only, for the rule editors: anyone who edits signatures or disclaimers can target a domain.
+  app.get("/api/domains/names", async (req, reply) => {
+    if (!requireUser(req, reply)) return;
+    return listDomains()
+      .sort((a, b) => Number(b.primary) - Number(a.primary) || a.name.localeCompare(b.name))
+      .map((d) => d.name);
+  });
+
   app.post("/api/domains", async (req, reply) => {
     const user = requireRole(["admin"], req, reply);
     if (!user) return;
