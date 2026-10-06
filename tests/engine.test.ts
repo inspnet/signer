@@ -233,6 +233,28 @@ describe("design renderer", () => {
     expect(html).toContain("Marketing Director");
     expect(html).not.toContain("{{");
   });
+
+  it("turns a text block into a link, with directory fields in the address", () => {
+    const user = emptyUser("scott@inspired.co");
+    user.website = "www.inspired.co";
+    const design = (href: string, underline = false) => ({
+      width: 520,
+      blocks: [{ id: "t", type: "text" as const, content: "Book a meeting", href, underline }]
+    });
+    expect(renderDesign(design("https://cal.example.com/scott"), user)).toContain(
+      '<a href="https://cal.example.com/scott" style="color:inherit;text-decoration:none;">Book a meeting</a>'
+    );
+    expect(renderDesign(design("{{website}}", true), user)).toContain(
+      '<a href="https://www.inspired.co" style="color:inherit;text-decoration:underline;">Book a meeting</a>'
+    );
+    expect(renderDesign(design("mailto:{{email}}"), user)).toContain('href="mailto:scott@inspired.co"');
+    // Anything but web, mail and phone links is dropped, not rendered.
+    for (const bad of ["javascript:alert(1)", "data:text/html,x", "not a link"]) {
+      const html = renderDesign(design(bad), user);
+      expect(html).not.toContain("<a ");
+      expect(html).toContain("Book a meeting");
+    }
+  });
 });
 
 describe("end-to-end processing", () => {

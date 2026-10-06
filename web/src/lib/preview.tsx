@@ -85,8 +85,20 @@ function BlockBody({
   onSelect: (id: string) => void;
 }) {
   switch (block.type) {
-    case "text":
-      return <p style={styleOf(block.style)}>{interpolate(block.content, user) || "Text"}</p>;
+    case "text": {
+      const text = interpolate(block.content, user) || "Text";
+      return (
+        <p style={styleOf(block.style)}>
+          {block.href ? (
+            <span style={{ textDecoration: block.underline ? "underline" : "none" }} title={interpolate(block.href, user)}>
+              {text}
+            </span>
+          ) : (
+            text
+          )}
+        </p>
+      );
+    }
     case "field": {
       const value = val(user, block.field);
       return (

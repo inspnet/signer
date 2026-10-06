@@ -88,7 +88,7 @@ export function SignaturesPage() {
         <div className="mt-5 grid md:grid-cols-2 gap-4">
           {items.map((s) => (
             <article key={s.id} className="panel overflow-hidden flex flex-col">
-              <div className="h-40 bg-[radial-gradient(#e7e0d4_1px,transparent_1px)] bg-[size:16px_16px] p-4 overflow-hidden">
+              <div className="h-40 bg-[radial-gradient(#dfe5ee_1px,transparent_1px)] bg-[size:16px_16px] p-4 overflow-hidden">
                 <SignatureThumb id={s.id} />
               </div>
               <div className="p-4 flex-1">
