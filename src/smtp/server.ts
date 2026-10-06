@@ -5,11 +5,16 @@ import ipaddr from "ipaddr.js";
 import { config } from "../config.js";
 import { logMail } from "../db/index.js";
 import { processRawMessage } from "../mail/process.js";
-import { getAllowedCidrs, initAllowedCidrs, startRangeRefresh } from "./ipranges.js";
+import { getAllowedCidrs } from "./ipranges.js";
 import { relayTargetFor } from "./route.js";
 import { describeFailure, RelayError } from "./explain.js";
 import { noteMailOutcome } from "../alerts/index.js";
 import { messageIdOf, queueSentItemsUpdate } from "../mail/sentitems.js";
+import { resolveIpv4 } from "./ipv4.js";
+import { authorizeInbound, InboundRefusal } from "./accept.js";
+import { hasProcessedHeader, hasValidStamp } from "../mail/stamp.js";
+
+export { hasProcessedHeader };
 
 export function ipAllowed(ip: string, cidrs: string[] = getAllowedCidrs()): boolean {
   if (!cidrs.length) return true;
@@ -50,11 +55,13 @@ export async function relayUpstream(raw: Buffer, envelopeFrom: string, envelopeT
   if (!target.host) {
     throw new Error("UPSTREAM_HOST is not configured; cannot return mail to Microsoft 365 / Google");
   }
+  // Dial the A record. Passing the name lets nodemailer pick an AAAA address at random.
+  const host = await resolveIpv4(target.host);
   const transporter = nodemailer.createTransport({
-    host: target.host,
+    host,
     port: target.port,
     secure: target.secure,
-    tls: { servername: target.servername, rejectUnauthorized: target.rejectUnauthorized },
+    tls: { servername: target.servername || target.host, rejectUnauthorized: target.rejectUnauthorized },
     auth: target.auth,
     name: config.smtp.hostname
   });
@@ -78,10 +85,9 @@ function createServer(banner: string): SMTPServer {
     key: tlsOptions().key,
     cert: tlsOptions().cert,
     size: config.smtp.maxMessageMb * 1024 * 1024,
-    onConnect(session, callback) {
-      if (!ipAllowed(session.remoteAddress)) {
-        return callback(new Error("Relay access denied"));
-      }
+    onConnect(_session, callback) {
+      // Who may submit is decided from the message: a listed From domain that
+      // passes DMARC. Connector IP ranges change, so they are not a gate.
       callback();
     },
     onMailFrom(_address, _session, callback) {
@@ -110,35 +116,23 @@ function createServer(banner: string): SMTPServer {
         chunks.length = 0;
         void handleMessage(raw, session)
           .then(() => callback())
-          .catch((err: Error) => {
-            // Reaching here means the message was not handed back: fail-open has
-            // already tried relaying it unsigned. Never answer 250 for mail we
-            // no longer hold. A 4xx leaves it queued at Microsoft/Google, which
-            // retry; acknowledging it would silently drop it.
+          .catch((err: Error & { responseCode?: number }) => {
+            // A policy refusal (unknown domain, DMARC fail) is a 550. Anything
+            // else means the message was not handed back: a 4xx leaves it
+            // queued at Microsoft/Google. Never answer 250 for mail we no longer hold.
+            if (err.responseCode === 550) return callback(err);
             console.error("[signer] Could not deliver a message; deferring it so the sender retries", err);
-            const deferral = new Error("Temporary failure, please retry later") as Error & { responseCode: number };
-            deferral.responseCode = 451;
+            const deferral = new Error(
+              err.responseCode && err.responseCode >= 400 && err.responseCode < 500
+                ? err.message
+                : "Temporary failure, please retry later"
+            ) as Error & { responseCode: number };
+            deferral.responseCode = err.responseCode && err.responseCode >= 400 && err.responseCode < 500 ? err.responseCode : 451;
             callback(deferral);
           });
       });
     }
   });
-}
-
-/**
- * Detect the loop-prevention header in the *header block* only.
- *
- * Searching the whole message matches the header name wherever it appears —
- * including quoted documentation, a forwarded message, or a base64 attachment
- * that happens to decode to it — and any such message would silently go
- * unsigned. The header block ends at the first blank line.
- */
-export function hasProcessedHeader(raw: Buffer): boolean {
-  const text = raw.toString("latin1");
-  const blankLine = text.search(/\r?\n\r?\n/);
-  const headerBlock = blankLine === -1 ? text : text.slice(0, blankLine);
-  const name = config.processedHeader.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^${name}:[ \t]*true[ \t]*$`, "im").test(headerBlock.replace(/\r?\n[ \t]+/g, " "));
 }
 
 /** Activity logging must never change the SMTP answer for mail already delivered. */
@@ -171,7 +165,7 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
     processingMs: Date.now() - started
   });
 
-  if (hasProcessedHeader(raw)) {
+  if (hasValidStamp(raw)) {
     try {
       await relayUpstream(raw, envelopeFrom, envelopeTo);
     } catch (err) {
@@ -181,6 +175,20 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
     }
     record({ ...entry(), status: "loop-prevented" });
     return;
+  }
+
+  try {
+    await authorizeInbound(raw, {
+      ip: session.remoteAddress,
+      helo: session.clientHostname || "",
+      sender: envelopeFrom
+    });
+  } catch (err) {
+    if (err instanceof InboundRefusal) {
+      record({ ...entry(), status: "rejected", detail: err.message });
+      throw err;
+    }
+    throw err;
   }
 
   let result: Awaited<ReturnType<typeof processRawMessage>>;
@@ -236,16 +244,9 @@ async function deliverUnsigned(
 }
 
 export async function startSmtp(): Promise<SMTPServer[]> {
-  const resolved = await initAllowedCidrs();
-  if (resolved.invalid.length) {
-    console.warn(`[signer] Ignoring unrecognised SMTP_ALLOWED_CIDRS entries: ${resolved.invalid.join(", ")}`);
-  }
-  if (resolved.cidrs.length) {
-    const sources = [...resolved.live, ...resolved.stale.map((p) => `${p} (cached)`)];
-    const from = sources.length ? ` from ${sources.join(", ")}` : "";
-    console.log(`[signer] SMTP allowlist: ${resolved.cidrs.length} ranges${from}`);
-  }
-  startRangeRefresh();
+  console.log(
+    "[signer] SMTP accepts mail only for domains listed in Settings → Domains, and only when DMARC passes. Sender IP ranges are not checked."
+  );
 
   const servers: SMTPServer[] = [];
   const ports = [...new Set([config.smtp.port, config.smtp.submissionPort, config.smtp.altPort])].filter((p) => p > 0);

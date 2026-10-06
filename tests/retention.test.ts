@@ -79,7 +79,7 @@ describe("directory pruning", () => {
   it("removes people a completed sync no longer returns, with their group memberships", () => {
     db.upsertDirectoryUser(directoryUser("entra", "1", "stays@example.com"));
     db.upsertDirectoryUser(directoryUser("entra", "2", "left@example.com"));
-    db.replaceGroups([{ id: "entra:g", name: "Sales", email: "", source: "entra" }], [
+    db.replaceGroups("entra", [{ id: "entra:g", name: "Sales", email: "", source: "entra" }], [
       { groupId: "entra:g", userId: "entra:1" },
       { groupId: "entra:g", userId: "entra:2" }
     ]);
@@ -87,7 +87,9 @@ describe("directory pruning", () => {
     expect(db.pruneDirectoryUsers("entra", ["entra:1"])).toBe(1);
     expect(db.getUserByEmail("left@example.com")).toBeNull();
     expect(db.getUserByEmail("stays@example.com")).not.toBeNull();
-    const members = db.getDb().prepare("SELECT user_id FROM group_members").all() as { user_id: string }[];
+    const members = db.getDb().prepare("SELECT user_id FROM group_members WHERE group_id = 'entra:g'").all() as {
+      user_id: string;
+    }[];
     expect(members.map((m) => m.user_id)).toEqual(["entra:1"]);
   });
 

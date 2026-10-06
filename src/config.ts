@@ -167,12 +167,10 @@ export function validateConfig(): { fatal: string[]; warnings: string[] } {
     warnings.push("DEMO_MODE is on: sample data is seeded and dev login may be enabled. Never use this for real mail.");
   }
 
-  if (!config.smtp.allowedCidrs.length) {
+  if (config.smtp.allowedCidrs.length) {
     warnings.push(
-      "SMTP_ALLOWED_CIDRS is empty, so any host that can reach the SMTP ports may relay mail through this " +
-        'instance. Set SMTP_ALLOWED_CIDRS="microsoft" or "google" to track the published sender ranges ' +
-        "automatically, list explicit CIDRs, or restrict the ports at the firewall (ufw, Linode Cloud " +
-        "Firewall)."
+      "SMTP_ALLOWED_CIDRS is set but is not used to accept or refuse mail. Connector addresses change. " +
+        "A message is accepted only when its From domain is listed in Settings → Domains and DMARC passes."
     );
   }
 

@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 import * as client from "openid-client";
 import { config, entraConfigured, googleLoginConfigured } from "../config.js";
-import { resolveRole, type SessionUser } from "../db/index.js";
+import { domainNames, resolveRole, type SessionUser } from "../db/index.js";
 
 const cookieName = "signer_session";
 
@@ -46,15 +46,22 @@ async function readSession(token: string | undefined): Promise<SessionUser | nul
   }
 }
 
-export async function setSession(reply: FastifyReply, user: SessionUser): Promise<void> {
-  const token = await signSession({ ...user, role: resolveRole(user.email) });
-  reply.setCookie(cookieName, token, {
+function cookieBase(): { httpOnly: true; sameSite: "lax"; path: "/"; secure: boolean } {
+  return {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
-    secure: config.publicUrl.startsWith("https"),
-    maxAge: 60 * 60 * 12
-  });
+    secure: config.publicUrl.startsWith("https")
+  };
+}
+
+export async function setSession(reply: FastifyReply, user: SessionUser): Promise<void> {
+  const token = await signSession({ ...user, role: resolveRole(user.email) });
+  reply.setCookie(cookieName, token, { ...cookieBase(), maxAge: 60 * 60 * 12 });
+}
+
+function clearAuthCookie(reply: FastifyReply, name: string): void {
+  reply.clearCookie(name, cookieBase());
 }
 
 export const authPlugin = fp(async function authPlugin(app: FastifyInstance): Promise<void> {
@@ -82,6 +89,11 @@ export function requireRole(roles: SessionUser["role"][], req: FastifyRequest, r
     return null;
   }
   return user;
+}
+
+/** Designers, editors and admins. Owners and the super admin pass requireRole already. */
+export function requireStaff(req: FastifyRequest, reply: FastifyReply): SessionUser | null {
+  return requireRole(["admin", "editor", "designer"], req, reply);
 }
 
 const pkceCookie = "signer_pkce";
@@ -186,7 +198,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   });
 
   app.post("/api/auth/logout", async (_req, reply) => {
-    reply.clearCookie(cookieName, { path: "/" });
+    clearAuthCookie(reply, cookieName);
     return { ok: true };
   });
 
@@ -203,21 +215,15 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       code_challenge_method: "S256",
       state
     });
-    reply.setCookie(pkceCookie, JSON.stringify({ codeVerifier, state, provider: "entra" }), {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      secure: config.publicUrl.startsWith("https"),
-      maxAge: 600
-    });
+    reply.setCookie(pkceCookie, JSON.stringify({ codeVerifier, state, provider: "entra" }), { ...cookieBase(), maxAge: 600 });
     return reply.redirect(url.href);
   });
 
-  app.get("/api/auth/entra/callback", authRateLimit, async (req, reply) => {
+  app.get("/api/auth/entra/callback", { ...authRateLimit, logLevel: "silent" }, async (req, reply) => {
     const oidc = await entraConfig();
     const stored = readPkceCookie(req.cookies[pkceCookie], "entra");
     if (!stored) {
-      reply.clearCookie(pkceCookie, { path: "/" });
+      clearAuthCookie(reply, pkceCookie);
       return reply.code(400).send({ error: "Login session expired or invalid. Start the sign-in again." });
     }
     const current = new URL(req.url, config.publicUrl);
@@ -235,7 +241,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       provider: "entra",
       role: resolveRole(email)
     });
-    reply.clearCookie(pkceCookie, { path: "/" });
+    clearAuthCookie(reply, pkceCookie);
     return reply.redirect("/");
   });
 
@@ -252,21 +258,15 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       code_challenge_method: "S256",
       state
     });
-    reply.setCookie(pkceCookie, JSON.stringify({ codeVerifier, state, provider: "google" }), {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      secure: config.publicUrl.startsWith("https"),
-      maxAge: 600
-    });
+    reply.setCookie(pkceCookie, JSON.stringify({ codeVerifier, state, provider: "google" }), { ...cookieBase(), maxAge: 600 });
     return reply.redirect(url.href);
   });
 
-  app.get("/api/auth/google/callback", authRateLimit, async (req, reply) => {
+  app.get("/api/auth/google/callback", { ...authRateLimit, logLevel: "silent" }, async (req, reply) => {
     const oidc = await googleConfig();
     const stored = readPkceCookie(req.cookies[pkceCookie], "google");
     if (!stored) {
-      reply.clearCookie(pkceCookie, { path: "/" });
+      clearAuthCookie(reply, pkceCookie);
       return reply.code(400).send({ error: "Login session expired or invalid. Start the sign-in again." });
     }
     const current = new URL(req.url, config.publicUrl);
@@ -276,7 +276,18 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     });
     const claims = tokens.claims();
     const email = String(claims?.email || "").toLowerCase();
-    if (!email) return reply.code(400).send({ error: "Google login did not return an email" });
+    if (!email || claims?.email_verified !== true) {
+      return reply.code(400).send({ error: "Google login did not return a verified email" });
+    }
+    const domain = email.split("@")[1] ?? "";
+    const known = new Set(domainNames());
+    if (!known.has(domain)) {
+      return reply.code(403).send({ error: "That Google account is not on a domain listed for this organisation." });
+    }
+    const hosted = typeof claims.hd === "string" ? claims.hd.toLowerCase() : "";
+    if (hosted && !known.has(hosted)) {
+      return reply.code(403).send({ error: "That Google account is not in this organisation." });
+    }
     await setSession(reply, {
       email,
       name: String(claims?.name || email),
@@ -284,7 +295,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       provider: "google",
       role: resolveRole(email)
     });
-    reply.clearCookie(pkceCookie, { path: "/" });
+    clearAuthCookie(reply, pkceCookie);
     return reply.redirect("/");
   });
 }

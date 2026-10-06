@@ -33,6 +33,15 @@ export const GRAPH_PERMISSION_HINT =
   "User.Read.All, Group.Read.All and GroupMember.Read.All, then click \"Grant admin consent\". " +
   "Delegated permissions do not work for sync.";
 
+function graphPage(next: string | undefined): string | undefined {
+  if (!next) return undefined;
+  const url = new URL(next);
+  if (url.protocol !== "https:" || url.hostname !== "graph.microsoft.com") {
+    throw new Error("Refusing a directory page outside graph.microsoft.com");
+  }
+  return url.href;
+}
+
 async function graphGet<T>(token: string, url: string): Promise<T> {
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) {
@@ -106,7 +115,7 @@ export async function syncEntra(): Promise<SyncResult> {
       users.push(row);
       upsertDirectoryUser(row);
     }
-    next = page["@odata.nextLink"];
+    next = graphPage(page["@odata.nextLink"]);
   }
   // Reached only when every page was read; a failed page throws above.
   const removed = pruneDirectoryUsers("entra", users.map((u) => u.id));
@@ -128,12 +137,12 @@ export async function syncEntra(): Promise<SyncResult> {
       while (mnext) {
         const members: { value: { id: string }[]; "@odata.nextLink"?: string } = await graphGet(token, mnext);
         for (const m of members.value) memberships.push({ groupId: gid, userId: `entra:${m.id}` });
-        mnext = members["@odata.nextLink"];
+        mnext = graphPage(members["@odata.nextLink"]);
       }
     }
-    gnext = page["@odata.nextLink"];
+    gnext = graphPage(page["@odata.nextLink"]);
   }
-  replaceGroups(groups, memberships);
+  replaceGroups("entra", groups, memberships);
   return { users: users.length, groups: groups.length, removed, source: "entra" };
 }
 
@@ -241,19 +250,28 @@ export async function syncGoogle(): Promise<SyncResult> {
     for (const g of json.groups || []) {
       const gid = `google:${g.id}`;
       groups.push({ id: gid, name: g.name || g.email || g.id, email: g.email || "", source: "google" });
-      const memRes = await fetch(`https://admin.googleapis.com/admin/directory/v1/groups/${encodeURIComponent(g.email || g.id)}/members`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (memRes.ok) {
-        const memJson = (await memRes.json()) as { members?: Array<{ id: string; email?: string; type?: string }> };
+      let memberPage = "";
+      do {
+        const membersUrl = new URL(
+          `https://admin.googleapis.com/admin/directory/v1/groups/${encodeURIComponent(g.email || g.id)}/members`
+        );
+        membersUrl.searchParams.set("maxResults", "200");
+        if (memberPage) membersUrl.searchParams.set("pageToken", memberPage);
+        const memRes = await fetch(membersUrl, { headers: { Authorization: `Bearer ${token}` } });
+        if (!memRes.ok) break;
+        const memJson = (await memRes.json()) as {
+          members?: Array<{ id: string; type?: string }>;
+          nextPageToken?: string;
+        };
         for (const m of memJson.members || []) {
           if (m.type === "USER") memberships.push({ groupId: gid, userId: `google:${m.id}` });
         }
-      }
+        memberPage = memJson.nextPageToken || "";
+      } while (memberPage);
     }
     pageToken = json.nextPageToken || "";
   } while (pageToken);
-  replaceGroups(groups, memberships);
+  replaceGroups("google", groups, memberships);
   return { users: users.length, groups: groups.length, removed, source: "google" };
 }
 

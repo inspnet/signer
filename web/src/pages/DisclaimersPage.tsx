@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type Disclaimer, type RuleSet } from "../api/client";
+import { HtmlFrame } from "../components/HtmlFrame";
 import { PageHeader } from "../components/PageHeader";
 import { RichTextEditor } from "../components/RichTextEditor";
 import { describeRules, RULE_TABS, RuleEditor, type RuleTab } from "../components/RuleEditor";
@@ -38,7 +39,7 @@ export function DisclaimersPage() {
                 {!d.enabled && <span className="ml-2 rounded bg-mist px-2 py-0.5 text-xs text-slate-600">Disabled</span>}
               </div>
               <div className="text-sm text-slate-500 mt-1">{describeRules(d.rules, groups)}</div>
-              <div className="mt-3 text-xs text-slate-600" dangerouslySetInnerHTML={{ __html: d.html }} />
+              <HtmlFrame html={d.html} className="mt-3 w-full h-24 border-0 bg-transparent" />
             </div>
             <div className="flex gap-2 shrink-0 items-start">
               <Link className="btn btn-ghost" to={`/disclaimers/${d.id}`}>

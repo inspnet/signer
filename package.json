@@ -31,6 +31,7 @@
     "iconv-lite": "^0.6.3",
     "ipaddr.js": "^2.2.0",
     "jose": "^6.0.11",
+    "mailauth": "^4.13.3",
     "mailparser": "^3.7.2",
     "nodemailer": "^10.0.10",
     "openid-client": "^6.5.0",

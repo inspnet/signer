@@ -222,7 +222,7 @@ It asks for:
 | Google: SMTP relay host | `smtp-relay.gmail.com` (the default) |
 | Entra tenant ID, client ID and secret, or Google OAuth client ID and secret | From [step 5](#5-create-the-sign-in-app). The script prints the redirect URI and permissions again here. Press Enter to skip and add them later |
 
-Everything else is set for you: the provider's published IP ranges as the SMTP allowlist, the right return port, loopback-only HTTP behind Nginx, the TLS paths, demo mode off. A first run takes a few minutes, most of it building the portal.
+Everything else is set for you: the right return port, loopback-only HTTP behind Nginx, the TLS paths, demo mode off. A first run takes a few minutes, most of it building the portal. Mail is accepted only for your listed domains when DMARC passes.
 
 It finishes with a summary: the portal URL, the public IPs (you need the IPv4 for the mail-flow connectors), whether outbound SMTP is open, and a numbered list of whatever is still left to do.
 
@@ -251,13 +251,13 @@ openssl s_client -starttls smtp -connect signer.example.com:25 -servername signe
   | openssl x509 -noout -subject -enddate
 ```
 
-The SMTP check only works from an address in the allowlist. From anywhere else Signer answers `554 Relay access denied`, which also shows the allowlist is working.
+The SMTP check accepts the message only when the From domain is listed and DMARC passes. A message from any other domain is answered `550`.
 
 On the server:
 
 ```bash
 systemctl status signer
-journalctl -u signer -n 50          # look for [signer] WARNING lines and "SMTP allowlist: N ranges"
+journalctl -u signer -n 50          # look for [signer] WARNING lines
 systemctl list-timers signer-backup.timer certbot.timer
 ```
 
@@ -415,7 +415,7 @@ sudo -u signer sqlite3 /var/lib/signer/signer.db \
   "SELECT received_at, status, sender, detail FROM mail_log WHERE status IN ('error','deferred') ORDER BY id DESC LIMIT 10;"
 ```
 
-- **The script says Signer did not start** → it prints the last log lines; `journalctl -u signer -n 100` shows more. Fatal configuration errors are printed as `[signer] FATAL:`: a missing `SESSION_SECRET`, a `TLS_CERT_PATH` that cannot be read, a numeric `TRUST_PROXY`, or an `SMTP_ALLOWED_CIDRS` provider that cannot be resolved with nothing cached (see [Provider IP ranges](#provider-ip-ranges)).
+- **The script says Signer did not start** → it prints the last log lines; `journalctl -u signer -n 100` shows more. Fatal configuration errors are printed as `[signer] FATAL:`: a missing `SESSION_SECRET`, a `TLS_CERT_PATH` that cannot be read, or a numeric `TRUST_PROXY`.
 - **No certificate** → the hostname did not resolve to this server when the script ran, or port 80 was unreachable. Fix DNS and re-run the script.
 - **`SMTP port 25 unavailable (EACCES)`** → Signer was started outside `signer.service`, so it lacks the capability to bind low ports. Start it with `systemctl` only.
 - **`SMTP port 25 unavailable (EADDRINUSE)`** → another mail server holds the port. `ss -ltnp 'sport = :25'`, stop it, re-run the script.
@@ -424,7 +424,7 @@ sudo -u signer sqlite3 /var/lib/signer/signer.db \
 - **Activity shows Deferred with `timed out` / `ETIMEDOUT` on port 25** → Linode's outbound SMTP block is still in place ([step 4](#4-ask-linode-to-lift-the-smtp-restriction)). `nc -vz -w 10 <tenant>.mail.protection.outlook.com 25` from the server confirms it.
 - **Mail is delayed or bounces after passing through Signer** → outbound SMTP is still blocked (re-run the script to check) or `UPSTREAM_*` is wrong. Signer defers mail it cannot hand back, so the provider's queue holds it until the block is lifted or the provider gives up.
 - **Relay fails with a certificate error** → upstream TLS is verified by default. Against a real `mail.protection.outlook.com` or `smtp-relay.gmail.com` host, this means the hostname is wrong. Only set `UPSTREAM_TLS_REJECT_UNAUTHORIZED=false` for a lab host with a self-signed certificate: it lets anyone on the network path read and alter the mail.
-- **Exchange or Gmail cannot connect at all** → if `SMTP_ALLOWED_CIDRS` is set, the connecting host is outside it. `GET /api/settings` shows what the allowlist resolved to. If a Linode Cloud Firewall is attached, it must allow 25 and 587 as well.
+- **Exchange or Gmail cannot connect at all** → if a Linode Cloud Firewall is attached, it must allow 25 and 587. A `550` in the message trace means the From domain is not listed or DMARC did not pass.
 - **OIDC redirect mismatch** → `PUBLIC_URL` and the Entra/Google redirect URI must match exactly (`https://host`, no trailing slash in `PUBLIC_URL`).
 - **Super admin cannot sign in** → the mailbox must match `SUPER_ADMIN_EMAIL` (case-insensitive).
 - **Connector loop** → the transport rule or content compliance rule must skip mail whose processed header is `true`.
@@ -500,7 +500,7 @@ See `.env.example` for the full list with comments. The keys that matter most:
 | `SUPER_ADMIN_EMAIL` | — | Break-glass owner; the only account that can grant the `owner` role |
 | `PRIMARY_DOMAIN` | super admin's domain | Seeds the [domain list](#domains) on first start; manage domains in the portal after that |
 | `SESSION_SECRET` | — | **Required.** The server exits without it unless `DEMO_MODE=true` |
-| `SMTP_ALLOWED_CIDRS` | empty | CIDRs, or `microsoft` / `google`. Empty accepts mail from anyone |
+| `SMTP_ALLOWED_CIDRS` | empty | Not used. Mail is accepted only for domains in Settings → Domains that pass DMARC |
 | `SMTP_MAX_MESSAGE_MB` | `150` | Largest message accepted. Exchange Online allows up to 150 MB, about 100 MB of attachments. Signing rewrites only the body text, so a message needs roughly twice its size in memory |
 | `SMTP_RANGE_REFRESH_MINUTES` | `720` | How often provider ranges are re-resolved; `0` disables |
 | `PUBLIC_IPV4` | detected | The IPv4 shown in the connector instructions. Read from the network interface; set it only behind NAT or with several public addresses |
@@ -532,7 +532,7 @@ The server validates its configuration before it listens:
   gateway with no error in Signer's own log.
 - **`TRUST_PROXY` must name the proxy.** A hop count such as `1` is rejected,
   because Fastify ignores hop counts and would trust nobody.
-- Warnings (printed, not fatal) cover an empty `SMTP_ALLOWED_CIDRS`, SMTP
+- Warnings (printed, not fatal) cover a leftover `SMTP_ALLOWED_CIDRS`, SMTP
   without a certificate, an unset `SMTP_HOSTNAME`, `TRUST_PROXY=true`, disabled
   upstream TLS verification, `DEMO_MODE`, a missing `UPSTREAM_HOST`, a missing
   `SUPER_ADMIN_EMAIL`, and having no login provider configured.
@@ -546,7 +546,7 @@ One Signer serves one Microsoft 365 or Google Workspace tenant, and a tenant oft
 
 The list controls two things:
 
-- **Who is signed.** Only senders whose address is on a listed domain get a signature, disclaimer or campaign. Mail from any other domain passes through unchanged, and the Activity log and rule tester say why.
+- **Who is accepted.** SMTP accepts a message only when its From domain is on this list and DMARC passes. Any other message is refused with `550`, so it is not relayed. Demo mode still requires a listed domain and skips the DNS check.
 - **Who is internal.** Recipients on a listed domain count as *internal* in rules, so an external-only disclaimer is not added to mail between your own domains.
 
 How it is managed:
@@ -569,40 +569,20 @@ Each domain in a Microsoft 365 tenant has its own Exchange Online endpoint, publ
 
 **Settings → Domains** shows each domain's route and the reason for it. `UPSTREAM_ROUTING=fixed` sends everything to `UPSTREAM_HOST` instead. Google Workspace always returns mail through `smtp-relay.gmail.com`, because a Google MX is the inbound server, not a relay, so per-domain routing applies to Microsoft 365 only.
 
-## Provider IP ranges
+## Who may submit mail
 
-`SMTP_ALLOWED_CIDRS` accepts explicit CIDRs, the names `microsoft` and `google`,
-or any mix of the two. The names resolve from the SPF records the providers
-publish — `spf.protection.outlook.com` and `_spf.google.com` — which list exactly
-the hosts their mail servers send from. Aliases are accepted (`m365`,
-`office365`, `o365`, `exchange`, `outlook`; `workspace`, `gmail`).
+Signer does not accept or refuse a connection based on the sender's IP address. Microsoft and Google renumber those hosts, and the published ranges cover every tenant on the platform, not just yours.
 
-SPF is used in preference to Microsoft's `endpoints.office.com` web service
-because it needs only DNS rather than outbound HTTPS, it is one mechanism for
-both providers, and it lists sending hosts rather than every address the service
-uses.
+A message is accepted only when both of these are true:
 
-**These ranges cover the provider's whole platform, not your tenant.** Allowing
-`microsoft` means any Microsoft 365 tenant could reach the gateway, not only
-yours. That keeps the open internet out, which is the point of the allowlist, but
-it is not tenant isolation — require TLS on the connector as well.
+- The From domain is listed under **Settings → Domains**.
+- DMARC passes for that domain (SPF or DKIM aligns, and a DMARC record exists). A temporary DNS failure is answered with `451` so the provider retries. A miss is `550`, and the message is not relayed.
 
-How it behaves:
+The public loop header is still `X-Signer-MessageProcessed: true`, which existing transport rules already match. Signer only skips signing when the message also carries a stamp this server created, so setting the header to `true` is not enough to relay a message unsigned.
 
-- Resolved at startup and re-resolved every `SMTP_RANGE_REFRESH_MINUTES`
-  (default 720, i.e. twice a day; `0` disables the refresh).
-- The answer is cached to `<DATA_DIR>/ip-ranges.cache.json`. If DNS is down at
-  startup, the cached copy is used and a warning is logged.
-- If a name cannot be resolved **and** nothing is cached, the server refuses to
-  start. An unresolved allowlist would otherwise be an empty one, and an empty
-  allowlist accepts mail from anyone — failing to start is the safer outcome.
-- A failed refresh keeps the ranges already in force rather than replacing them
-  with a partial answer.
-- Entries that are neither a provider name nor a valid CIDR are ignored with a
-  warning, not treated as a match.
+`SMTP_ALLOWED_CIDRS` is ignored. Return connections to Microsoft 365 and Google are made over IPv4. Exchange rejects the IPv6 path unless the message already passes SPF or DKIM, and that address is often listed.
 
-`GET /api/settings` reports what the allowlist actually resolved to
-(`smtpAllowlist`), so you can confirm the expansion without reading the log.
+`DEMO_MODE` still requires a listed domain and does not query DMARC, so a lab can submit mail without a published record. Do not enable it on a host that receives real mail.
 
 ## Portal hardening
 

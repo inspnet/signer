@@ -118,8 +118,8 @@ describe("messages that must not be rewritten", () => {
     const out = result.raw.toString("utf8");
     expect(out).toContain("BEGIN:VCALENDAR");
     expect(out).toContain("END:VCALENDAR");
-    // Everything after the added header is the original message, byte for byte.
-    expect(out.slice(out.indexOf("\r\n") + 2)).toBe(raw.toString("utf8"));
+    // Stamp, then the public loop header, then the original bytes.
+    expect(out.split("\r\n").slice(2).join("\r\n")).toBe(raw.toString("utf8"));
   });
 
   it("passes S/MIME signed mail through untouched", async () => {

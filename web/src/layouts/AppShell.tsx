@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   BarChart3,
   Home,
@@ -28,6 +28,10 @@ const nav = [
 export function AppShell() {
   const { user, refresh } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const staff = user != null && user.role !== "user";
+  const items = staff ? nav : nav.filter((item) => item.to === "/me");
+  if (user?.role === "user" && location.pathname !== "/me") return <Navigate to="/me" replace />;
   const initials = (user?.name || user?.email || "U")
     .split(" ")
     .map((p) => p[0])
@@ -48,7 +52,7 @@ export function AppShell() {
           </span>
         </button>
         <nav className="flex-1 px-4 py-2 space-y-1">
-          {nav.map((item) => (
+          {items.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

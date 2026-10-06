@@ -14,10 +14,11 @@ import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { MyDetailsPage } from "./pages/MyDetailsPage";
 
-function Guard({ children }: { children: ReactNode }) {
+function Guard({ children, staff = false }: { children: ReactNode; staff?: boolean }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="p-10 text-slate-500">Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (staff && user.role === "user") return <Navigate to="/me" replace />;
   return <>{children}</>;
 }
 
@@ -29,7 +30,7 @@ export default function App() {
         <Route
           path="/signatures/:id/design"
           element={
-            <Guard>
+            <Guard staff>
               <DesignerPage />
             </Guard>
           }

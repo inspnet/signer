@@ -139,7 +139,7 @@ describe("SMTP round trip through the gateway", () => {
     expect(received).toMatch(/X-Signer-MessageProcessed: true/i);
   });
 
-  it("does not sign a message that already carries the processed header", async () => {
+  it("still signs a message that only sets the processed header", async () => {
     const transport = nodemailer.createTransport({
       host: "127.0.0.1",
       port: signerPort,
@@ -159,6 +159,6 @@ describe("SMTP round trip through the gateway", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     const received = delivered[delivered.length - 1]!;
-    expect(received).not.toContain("Marketing Director");
+    expect(received).toContain("Marketing Director");
   });
 });

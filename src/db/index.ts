@@ -677,15 +677,18 @@ export function listGroups(): { id: string; name: string; email: string; source:
 }
 
 export function replaceGroups(
+  source: string,
   groups: { id: string; name: string; email: string; source: string }[],
   memberships: { groupId: string; userId: string }[]
 ): void {
   const d = getDb();
   const tx = d.transaction(() => {
-    d.prepare("DELETE FROM group_members").run();
-    d.prepare("DELETE FROM groups").run();
+    const existing = d.prepare("SELECT id FROM groups WHERE source = ?").all(source) as { id: string }[];
+    const delMem = d.prepare("DELETE FROM group_members WHERE group_id = ?");
+    for (const row of existing) delMem.run(row.id);
+    d.prepare("DELETE FROM groups WHERE source = ?").run(source);
     const g = d.prepare("INSERT INTO groups (id, name, email, source) VALUES (?, ?, ?, ?)");
-    for (const group of groups) g.run(group.id, group.name, group.email, group.source);
+    for (const group of groups) g.run(group.id, group.name, group.email, source);
     const m = d.prepare("INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)");
     for (const mem of memberships) m.run(mem.groupId, mem.userId);
   });
