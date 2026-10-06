@@ -133,6 +133,7 @@ export function initDb(): Database.Database {
   db.pragma("secure_delete = ON");
   migrate(db);
   if (config.demoMode) seedDemo(db);
+  seedDomains(db);
   ensureSuperAdminDirectoryUser();
   return db;
 }
@@ -300,6 +301,13 @@ function migrate(d: Database.Database): void {
       action TEXT NOT NULL,
       entity TEXT NOT NULL DEFAULT '',
       detail TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS domains (
+      name TEXT PRIMARY KEY,
+      is_primary INTEGER NOT NULL DEFAULT 0,
+      added_at TEXT NOT NULL,
+      added_by TEXT NOT NULL DEFAULT ''
     );
 
     CREATE INDEX IF NOT EXISTS idx_mail_log_received ON mail_log(received_at);
@@ -883,6 +891,98 @@ export function saveFolder(name: string, id?: string): FolderRecord {
       .run(folderId, name, max + 1, JSON.stringify(defaultRules()));
   }
   return listFolders().find((f) => f.id === folderId)!;
+}
+
+// ---------------------------------------------------------------------------
+// Domains: the email domains this tenant sends from. One Signer instance serves
+// one Microsoft 365 or Google Workspace tenant, which can own several domains.
+// Senders on these domains are signed; recipients on them count as internal.
+
+export type DomainRecord = { name: string; primary: boolean; addedAt: string; addedBy: string };
+
+export class DomainError extends Error {}
+
+const DOMAIN_PATTERN = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+(xn--[a-z0-9-]{2,59}|[a-z]{2,63})$/;
+
+/** Lower-case, strip a leading "@", and reject anything that is not a domain name. */
+export function normalizeDomain(input: string): string | null {
+  const name = input.trim().toLowerCase().replace(/^@/, "").replace(/\.$/, "");
+  return DOMAIN_PATTERN.test(name) ? name : null;
+}
+
+/**
+ * First start (or an upgrade from before domains existed): seed the list so
+ * mail keeps flowing. PRIMARY_DOMAIN wins; otherwise the super admin's domain.
+ * The legacy INTERNAL_DOMAINS setting is carried over as extra domains, and a
+ * demo instance gets its sample users' domain.
+ */
+function seedDomains(d: Database.Database): void {
+  const count = (d.prepare("SELECT COUNT(*) AS c FROM domains").get() as { c: number }).c;
+  if (count > 0) return;
+  const candidates: string[] = [];
+  const primary = normalizeDomain(config.primaryDomain) ?? normalizeDomain(config.superAdminEmail.split("@")[1] ?? "");
+  if (primary) candidates.push(primary);
+  for (const extra of (process.env.INTERNAL_DOMAINS || "").split(",")) {
+    const name = normalizeDomain(extra);
+    if (name) candidates.push(name);
+  }
+  if (config.demoMode) {
+    for (const row of d.prepare("SELECT DISTINCT domain FROM users WHERE source = 'demo'").all() as { domain: string }[]) {
+      const name = normalizeDomain(row.domain);
+      if (name) candidates.push(name);
+    }
+  }
+  const unique = [...new Set(candidates)];
+  const insert = d.prepare("INSERT OR IGNORE INTO domains (name, is_primary, added_at, added_by) VALUES (?, ?, ?, 'setup')");
+  const now = new Date().toISOString();
+  unique.forEach((name, i) => insert.run(name, i === 0 ? 1 : 0, now));
+}
+
+export function listDomains(): DomainRecord[] {
+  return (
+    getDb()
+      .prepare("SELECT name, is_primary, added_at, added_by FROM domains ORDER BY is_primary DESC, name ASC")
+      .all() as { name: string; is_primary: number; added_at: string; added_by: string }[]
+  ).map((r) => ({ name: r.name, primary: r.is_primary === 1, addedAt: r.added_at, addedBy: r.added_by }));
+}
+
+export function domainNames(): string[] {
+  return (getDb().prepare("SELECT name FROM domains").all() as { name: string }[]).map((r) => r.name);
+}
+
+export function addDomain(input: string, addedBy: string): DomainRecord {
+  const name = normalizeDomain(input);
+  if (!name) throw new DomainError(`"${input}" is not a valid domain name.`);
+  const d = getDb();
+  const isFirst = (d.prepare("SELECT COUNT(*) AS c FROM domains").get() as { c: number }).c === 0;
+  d.prepare("INSERT OR IGNORE INTO domains (name, is_primary, added_at, added_by) VALUES (?, ?, ?, ?)").run(
+    name,
+    isFirst ? 1 : 0,
+    new Date().toISOString(),
+    addedBy
+  );
+  return listDomains().find((r) => r.name === name)!;
+}
+
+export function removeDomain(input: string): void {
+  const name = normalizeDomain(input);
+  const row = name
+    ? (getDb().prepare("SELECT is_primary FROM domains WHERE name = ?").get(name) as { is_primary: number } | undefined)
+    : undefined;
+  if (!row) throw new DomainError(`${input} is not in the domain list.`);
+  if (row.is_primary) throw new DomainError("The primary domain cannot be removed. Make another domain primary first.");
+  getDb().prepare("DELETE FROM domains WHERE name = ?").run(name);
+}
+
+export function setPrimaryDomain(input: string): void {
+  const name = normalizeDomain(input);
+  const d = getDb();
+  const exists = name ? d.prepare("SELECT 1 FROM domains WHERE name = ?").get(name) : undefined;
+  if (!exists) throw new DomainError(`${input} is not in the domain list.`);
+  d.transaction(() => {
+    d.prepare("UPDATE domains SET is_primary = 0").run();
+    d.prepare("UPDATE domains SET is_primary = 1 WHERE name = ?").run(name);
+  })();
 }
 
 export function getSetting(key: string, fallback = ""): string {

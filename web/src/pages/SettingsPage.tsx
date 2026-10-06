@@ -1,20 +1,26 @@
 import { useEffect, useState } from "react";
-import { api } from "../api/client";
+import { api, type UpdateCheck, type UpdateStatus } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
 
 export function SettingsPage() {
-  const [tab, setTab] = useState<"flow" | "directory" | "fields" | "admins">("flow");
+  const [tab, setTab] = useState<"flow" | "domains" | "directory" | "fields" | "admins" | "updates">("flow");
   return (
     <div>
-      <PageHeader kicker="Admin" title="Mail flow" description="Connectors, directory cache, and who may edit their own card." />
+      <PageHeader
+        kicker="Admin"
+        title="Mail flow"
+        description="Connectors, domains, directory cache, who may edit their own card, and updates."
+      />
       <div className="tabs">
-        {(["flow", "directory", "fields", "admins"] as const).map((t) => (
+        {(["flow", "domains", "directory", "fields", "admins", "updates"] as const).map((t) => (
           <button key={t} className={`tab capitalize ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
             {t === "flow" ? "Connectors" : t === "fields" ? "Field locks" : t}
           </button>
         ))}
       </div>
       {tab === "flow" && <MailFlow />}
+      {tab === "domains" && <Domains />}
+      {tab === "updates" && <Updates />}
       {tab === "directory" && <Directory />}
       {tab === "fields" && <Fields />}
       {tab === "admins" && <Admins />}
@@ -196,6 +202,255 @@ function Admins() {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+function Domains() {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.domains>> | null>(null);
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+  const load = () => api.domains().then(setData);
+  useEffect(() => {
+    void load();
+  }, []);
+  const act = async (fn: () => Promise<unknown>) => {
+    setError("");
+    try {
+      await fn();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  if (!data) return <p className="mt-4 text-stone-500">Loading…</p>;
+  return (
+    <div className="mt-6 max-w-2xl space-y-6">
+      <p className="text-sm text-stone-600 leading-6">
+        The email domains this Microsoft 365 or Google Workspace tenant sends from. Only senders on these domains get a
+        signature, disclaimer or campaign; mail from any other domain passes through unchanged. Recipients on these domains
+        count as <strong>internal</strong> in rules. The connectors and routing rules already cover every domain in the
+        tenant, so adding a domain here needs no change in Exchange or Google.
+      </p>
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void act(async () => {
+            await api.addDomain(name);
+            setName("");
+          });
+        }}
+      >
+        <input className="input flex-1" placeholder="example.com" value={name} onChange={(e) => setName(e.target.value)} />
+        <button className="btn btn-primary" disabled={!name.trim()}>
+          Add domain
+        </button>
+      </form>
+      {error && <p className="text-sm text-red-700">{error}</p>}
+      <ul className="panel divide-y divide-line">
+        {data.domains.map((d) => (
+          <li key={d.name} className="p-3 flex items-center justify-between text-sm">
+            <span>
+              <strong>{d.name}</strong>
+              {d.primary && <span className="ml-2 rounded bg-mist px-2 py-0.5 text-xs text-stone-600">Primary</span>}
+            </span>
+            {!d.primary && (
+              <span className="flex gap-2">
+                <button className="btn btn-ghost" onClick={() => void act(() => api.makePrimaryDomain(d.name))}>
+                  Make primary
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    if (confirm(`Stop adding signatures for senders on ${d.name}?`)) void act(() => api.removeDomain(d.name));
+                  }}
+                >
+                  Remove
+                </button>
+              </span>
+            )}
+          </li>
+        ))}
+        {!data.domains.length && <li className="p-3 text-sm text-stone-500">No domains yet: every sender is signed until you add one.</li>}
+      </ul>
+      {data.suggestions.length > 0 && (
+        <div>
+          <h3 className="font-medium text-sm">Found in the directory</h3>
+          <p className="text-xs text-stone-500 mt-1">Staff addresses use these domains, but they are not in the list.</p>
+          <ul className="mt-2 panel divide-y divide-line">
+            {data.suggestions.map((s) => (
+              <li key={s.domain} className="p-3 flex items-center justify-between text-sm">
+                <span>
+                  {s.domain} <span className="text-stone-400">({s.people} {s.people === 1 ? "person" : "people"})</span>
+                </span>
+                <button className="btn btn-ghost" onClick={() => void act(() => api.addDomain(s.domain))}>
+                  Add
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const FINISHED = new Set(["idle", "succeeded", "failed", "rolled-back", "current"]);
+
+function shortSha(sha?: string) {
+  return sha ? sha.slice(0, 7) : "";
+}
+
+function Updates() {
+  const [info, setInfo] = useState<Awaited<ReturnType<typeof api.updates>> | null>(null);
+  const [check, setCheck] = useState<UpdateCheck | null>(null);
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [polling, setPolling] = useState(false);
+
+  useEffect(() => {
+    void api.updates().then((res) => {
+      setInfo(res);
+      setStatus(res.status);
+      if (!FINISHED.has(res.status.state)) setPolling(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!polling) return;
+    const timer = setInterval(async () => {
+      try {
+        const next = await api.updateStatus();
+        setStatus(next);
+        if (FINISHED.has(next.state)) {
+          setPolling(false);
+          setInfo(await api.updates());
+        }
+      } catch {
+        // Signer is restarting onto the new version; keep polling.
+        setStatus((s) => (s ? { ...s, message: "Signer is restarting…" } : s));
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [polling]);
+
+  if (!info) return <p className="mt-4 text-stone-500">Loading…</p>;
+  const current = info.current;
+  return (
+    <div className="mt-6 max-w-3xl space-y-6">
+      <section className="panel p-5 text-sm space-y-1">
+        <h2 className="font-semibold text-lg">Installed version</h2>
+        {current ? (
+          <>
+            <p>
+              <code>{shortSha(current.commit)}</code> {current.subject}
+            </p>
+            <p className="text-stone-500">
+              {current.date && new Date(current.date).toLocaleString()} · branch {current.branch}
+            </p>
+          </>
+        ) : (
+          <p className="text-stone-500">Not a git checkout, so the version is unknown.</p>
+        )}
+      </section>
+
+      {!info.available ? (
+        <p className="text-sm text-stone-600 leading-6">
+          Updating from the portal needs a server set up with <code>deploy/install.sh</code>. To turn it on for an install
+          made before this feature existed, re-run the installer once on the server:{" "}
+          <code>curl -fsSL https://raw.githubusercontent.com/inspnet/signer/main/deploy/install.sh -o install.sh && sudo bash install.sh</code>
+        </p>
+      ) : (
+        <section className="panel p-5 text-sm space-y-3">
+          <div className="flex gap-2">
+            <button
+              className="btn btn-ghost"
+              disabled={!!busy || polling}
+              onClick={async () => {
+                setBusy("check");
+                setError("");
+                try {
+                  setCheck(await api.checkUpdates());
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setBusy("");
+                }
+              }}
+            >
+              {busy === "check" ? "Checking…" : "Check for updates"}
+            </button>
+            {check?.updateAvailable && (
+              <button
+                className="btn btn-primary"
+                disabled={!!busy || polling}
+                onClick={async () => {
+                  if (!confirm("Install the update now? Signer restarts, and mail arriving during the restart is retried by Microsoft or Google.")) return;
+                  setBusy("install");
+                  setError("");
+                  try {
+                    await api.installUpdate();
+                    setStatus({ state: "requested", message: "Waiting for the updater to start…", log: [] });
+                    setPolling(true);
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : String(err));
+                  } finally {
+                    setBusy("");
+                  }
+                }}
+              >
+                Install update
+              </button>
+            )}
+          </div>
+          {error && <p className="text-red-700">{error}</p>}
+          {check && !check.updateAvailable && <p className="text-stone-600">Signer is up to date.</p>}
+          {check?.updateAvailable && (
+            <div>
+              <p>
+                {check.commits.length ? `${check.commits.length} new change${check.commits.length === 1 ? "" : "s"}` : "A newer version is available"}{" "}
+                (<code>{shortSha(check.latest.commit)}</code>){check.commits.length ? ":" : "."}
+              </p>
+              <ul className="mt-2 list-disc ml-5 space-y-1">
+                {check.commits.map((c) => (
+                  <li key={c.commit}>
+                    {c.subject} <span className="text-stone-400">— {new Date(c.date).toLocaleDateString()}</span>
+                  </li>
+                ))}
+              </ul>
+              {check.installerChanged && (
+                <p className="mt-3 text-amber-800">
+                  This update also changes the server setup (<code>deploy/install.sh</code>). Install it here, then re-run the
+                  installer on the server to apply those changes too.
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {status && status.state !== "idle" && (
+        <section className="panel p-5 text-sm">
+          <h2 className="font-semibold">
+            Last update: {status.state.replace("-", " ")}
+            {status.from && status.to && (
+              <span className="font-normal text-stone-500">
+                {" "}
+                ({shortSha(status.from)} → {shortSha(status.to)})
+              </span>
+            )}
+          </h2>
+          <p className="mt-1 text-stone-600">{status.message}</p>
+          {status.state === "succeeded" && (
+            <button className="btn btn-ghost mt-2" onClick={() => window.location.reload()}>
+              Reload the portal
+            </button>
+          )}
+          {status.log.length > 0 && <pre className="mt-3 bg-mist p-3 rounded-lg text-xs overflow-auto max-h-80">{status.log.join("\n")}</pre>}
+        </section>
+      )}
     </div>
   );
 }

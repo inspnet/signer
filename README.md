@@ -74,9 +74,12 @@ The script installs and configures:
 - **Data** (SQLite database, uploads, IP range cache) in `/var/lib/signer`, with a nightly backup kept for 14 days.
 - **The firewall** (ufw): 22, 80, 443, 25 and 587 open, everything else closed.
 - **Log retention**: the system journal, which holds Signer's request log, keeps 14 days ([PRIVACY.md](PRIVACY.md)).
+- **The updater** behind the portal's **Mail flow → Updates** tab, so an owner can install new versions from the browser.
 - Automatic Ubuntu security updates, and swap on small servers so builds don't run out of memory.
 
-Running the same script again **updates** Signer to the latest code and keeps your configuration.
+Running the same script again also **updates** Signer, and keeps your configuration. See [Updating an existing install](#updating-an-existing-install).
+
+**One Signer per tenant.** Each Microsoft 365 or Google Workspace tenant gets its own Signer server. A tenant with several email domains still needs only one: the installer sets up the primary domain, and the others are added in the portal ([Domains](#domains)).
 
 ### Before you start
 
@@ -84,7 +87,7 @@ Running the same script again **updates** Signer to the latest code and keeps yo
 2. **A DNS name** for the instance, e.g. `signer.example.com`, where you can add A/AAAA records.
 3. **The super admin's email** (`SUPER_ADMIN_EMAIL`). That person must be able to sign in with Entra ID or Google.
 4. **For Microsoft 365:** the tenant's MX host (Microsoft 365 admin → Settings → Domains → the domain → MX record, e.g. `contoso-com.mail.protection.outlook.com`).
-5. **Admin access** to Exchange Online or Google Workspace, and the ability to create an Entra app registration or Google OAuth client for sign-in ([Identity](#identity-entra-or-google)). You can add these after installing.
+5. **Admin access** to Exchange Online or Google Workspace, and the ability to create an Entra app registration or Google OAuth client ([step 5](#5-create-the-sign-in-app)).
 
 Do **not** set `DEMO_MODE=true` or `AUTH_ALLOW_DEV_LOGIN=true` on a server that receives real mail.
 
@@ -144,7 +147,57 @@ Linode blocks **outbound** TCP 25, 465 and 587 on Linodes in newer accounts. Ope
 
 Carry on while you wait. The script reports whether outbound SMTP is open, so run it again once support replies.
 
-### 5. Run the install script
+### 5. Create the sign-in app
+
+Do this before running the script so you can paste the IDs straight in. You can also skip it and add them afterwards. The script prints these same values when it asks.
+
+#### Microsoft 365: one Entra app registration
+
+One app does both jobs: staff and admins **sign in** to the portal with it, and Signer uses it to **sync the directory** (names, titles, phone numbers, groups).
+
+1. [Entra admin center](https://entra.microsoft.com) → **App registrations** → **New registration**.
+2. Name `Signer`. Supported account types: **Accounts in this organizational directory only**.
+3. **Redirect URI**: platform **Web**, value:
+
+   ```
+   https://signer.example.com/api/auth/entra/callback
+   ```
+
+   That is `https://` + your Signer hostname + `/api/auth/entra/callback`, matching `PUBLIC_URL` exactly.
+4. **Certificates & secrets** → **New client secret**. Copy the secret **Value** (not the Secret ID); it is shown only once.
+5. **API permissions** → **Add a permission** → **Microsoft Graph**, then add both kinds:
+
+   | Type | Permissions | Used for |
+   | --- | --- | --- |
+   | **Delegated** | `openid`, `profile`, `email` | Signing in to the portal |
+   | **Application** | `User.Read.All`, `Group.Read.All`, `GroupMember.Read.All` | Directory sync, which runs in the background with no user signed in |
+
+6. **Grant admin consent for \<tenant\>**. Every row should show a green **Granted** status, and the three sync rows must say **Application** in the Type column.
+
+The installer asks for the **Directory (tenant) ID** and **Application (client) ID** from the app's Overview page, and the secret value.
+
+> **Sync fails with `Authorization_RequestDenied` / "Insufficient privileges"?** The sync permissions were added as **Delegated** instead of **Application**, or admin consent was not granted. Delegated permissions with the same names do not apply to background sync. Add the Application versions, grant consent, wait a minute, and synchronise again.
+
+#### Google Workspace
+
+1. [Google Cloud console](https://console.cloud.google.com/apis/credentials), in any project (it only holds the OAuth client; nothing is hosted there) → **OAuth consent screen** → Internal.
+2. **Credentials** → **Create credentials** → **OAuth client ID** → Web application. **Authorized redirect URI**:
+
+   ```
+   https://signer.example.com/api/auth/google/callback
+   ```
+
+3. The installer asks for the client ID and secret.
+4. Directory sync also needs a **service account**:
+   - Enable the [Admin SDK API](https://console.cloud.google.com/apis/library/admin.googleapis.com) and create a service account. Download its JSON key.
+   - In Workspace Admin → Security → Access and data control → API controls → **Domain-wide delegation**, add the service account's client ID with these scopes:
+     - `https://www.googleapis.com/auth/admin.directory.user.readonly`
+     - `https://www.googleapis.com/auth/admin.directory.group.readonly`
+   - After installing, put the **entire JSON** on one line in `GOOGLE_SERVICE_ACCOUNT_JSON` in `/etc/signer/signer.env`. Set `GOOGLE_ADMIN_EMAIL` to a super admin (or delegated admin) for the service account to impersonate.
+
+`SUPER_ADMIN_EMAIL` is the break-glass owner: that mailbox must be able to sign in through the provider you set up here.
+
+### 6. Run the install script
 
 SSH in as root and run:
 
@@ -159,28 +212,29 @@ It asks for:
 | --- | --- |
 | Hostname | `signer.example.com` |
 | Super admin's email | `it-admin@clientdomain.com` (also the Let's Encrypt contact) |
+| Primary email domain | `clientdomain.com` (defaults to the super admin's domain; add others later in the portal) |
 | Mail provider | `microsoft` or `google` |
 | Microsoft: tenant MX host | `clientdomain-com.mail.protection.outlook.com` |
 | Google: SMTP relay host | `smtp-relay.gmail.com` (the default) |
-| Entra tenant ID, client ID and secret, or Google OAuth client ID and secret | Press Enter to skip and add them later |
+| Entra tenant ID, client ID and secret, or Google OAuth client ID and secret | From [step 5](#5-create-the-sign-in-app). The script prints the redirect URI and permissions again here. Press Enter to skip and add them later |
 
 Everything else is set for you: the provider's published IP ranges as the SMTP allowlist, the right return port, loopback-only HTTP behind Nginx, the TLS paths, demo mode off. A first run takes a few minutes, most of it building the portal.
 
 It finishes with a summary: the portal URL, the public IPs (you need the IPv4 for the mail-flow connectors), whether outbound SMTP is open, and a numbered list of whatever is still left to do.
 
-To answer the questions up front, for example from a Linode StackScript, set `SIGNER_DOMAIN`, `SIGNER_ADMIN_EMAIL`, `SIGNER_PROVIDER` and `SIGNER_UPSTREAM_HOST` before running it.
+To answer the questions up front, for example from a Linode StackScript, set `SIGNER_DOMAIN`, `SIGNER_ADMIN_EMAIL`, `SIGNER_PRIMARY_DOMAIN`, `SIGNER_PROVIDER` and `SIGNER_UPSTREAM_HOST` before running it.
 
-### 6. Finish the configuration
+### 7. Finish the configuration
 
 Edit `/etc/signer/signer.env` for anything you skipped, then `systemctl restart signer`:
 
-- **Sign-in:** `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET`, or `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` ([Identity](#identity-entra-or-google)).
+- **Sign-in and Entra directory sync:** `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET`, or `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` ([step 5](#5-create-the-sign-in-app)).
 - **Google directory sync:** `GOOGLE_SERVICE_ACCOUNT_JSON` (the whole key file on one line) and `GOOGLE_ADMIN_EMAIL`.
 - **Google SMTP relay with authentication:** `UPSTREAM_USER` / `UPSTREAM_PASS`.
 
 Every setting is documented in the file itself; it starts as a copy of `.env.example`.
 
-### 7. Verify
+### 8. Verify
 
 From your own machine:
 
@@ -203,34 +257,11 @@ journalctl -u signer -n 50          # look for [signer] WARNING lines and "SMTP 
 systemctl list-timers signer-backup.timer certbot.timer
 ```
 
-Then sign in at `https://signer.example.com` as the super admin, synchronise the directory (**Mail flow → Directory**), and build a signature before connecting mail flow.
+Then sign in at `https://signer.example.com` as the super admin and:
 
----
-
-### Identity (Entra or Google)
-
-`SUPER_ADMIN_EMAIL` is the break-glass owner. That mailbox must sign in through Entra or Google, so at least one provider must be configured.
-
-#### Microsoft Entra ID
-
-1. [Entra admin center](https://entra.microsoft.com) → **App registrations** → New registration.
-2. Name: `Signer`. Supported account types: **Accounts in this organizational directory only**.
-3. Redirect URI (Web): `https://signer.example.com/api/auth/entra/callback`.
-4. Certificates & secrets → new **client secret**. Put the tenant ID, application (client) ID and secret value in `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET`.
-5. API permissions (delegated): `openid`, `profile`, `email`. Grant admin consent.
-6. **Directory sync** (names, titles, groups): add **application** permissions `User.Read.All`, `Group.Read.All`, `GroupMember.Read.All` and grant admin consent. Use the same app, or a second one via `ENTRA_DIRECTORY_CLIENT_ID` / `ENTRA_DIRECTORY_CLIENT_SECRET`.
-7. Put them in `/etc/signer/signer.env` and run `systemctl restart signer`. Sign in as `SUPER_ADMIN_EMAIL`, then **Mail flow → Directory → Synchronise**.
-
-#### Google Workspace
-
-1. [Google Cloud console](https://console.cloud.google.com/apis/credentials), in any project (it only holds the OAuth client; nothing is hosted there) → **OAuth consent screen** → Internal.
-2. **Credentials** → OAuth client ID → Web application. Authorized redirect URI: `https://signer.example.com/api/auth/google/callback`. Fill `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
-3. Directory sync: create a **service account**, download its JSON key, and put the **entire JSON** on one line in `GOOGLE_SERVICE_ACCOUNT_JSON`. Enable the [Admin SDK API](https://console.cloud.google.com/apis/library/admin.googleapis.com).
-4. Workspace Admin → Security → Access and data control → API controls → **Domain-wide delegation**: add the service account's client ID with these scopes:
-   - `https://www.googleapis.com/auth/admin.directory.user.readonly`
-   - `https://www.googleapis.com/auth/admin.directory.group.readonly`
-5. `GOOGLE_ADMIN_EMAIL` must be a super admin (or delegated admin) that the service account impersonates.
-6. Restart Signer, sign in as `SUPER_ADMIN_EMAIL`, then synchronise the directory from the portal.
+1. **Mail flow → Domains**: check the primary domain, and add the tenant's other email domains. The **Found in the directory** list offers any your staff use that are missing.
+2. **Mail flow → Directory → Synchronise**.
+3. Build a signature and try it in the **Rule tester** before connecting mail flow.
 
 ---
 
@@ -285,9 +316,32 @@ In [admin.google.com](https://admin.google.com) → Apps → Google Workspace �
 
 ---
 
+### Updating an existing install
+
+There are two ways. Both keep `/etc/signer/signer.env` and all data. Files in `/opt/signer` are replaced on every update, so keep configuration in `/etc/signer/signer.env`. A restart drops SMTP connections in progress; Microsoft and Google retry them.
+
+**From the portal (code only).** An owner opens **Mail flow → Updates**, presses **Check for updates** to see what changed, then **Install update**. The new version is built while the old one keeps running, then Signer restarts. If the build fails, nothing changes. If the new version does not start, Signer goes back to the previous version on its own. The tab shows progress and the updater's log.
+
+**From the server (code and server setup).** SSH in as root and run the same two commands as a new install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/inspnet/signer/main/deploy/install.sh -o install.sh
+sudo bash install.sh
+```
+
+It skips the questions, then updates packages and Signer, rewrites the systemd units, Nginx config and helpers, and checks everything again. Use this when the portal says an update **changes the server setup**, after a failed portal update, or simply to get everything current.
+
+**Installs made before the portal updater existed** need the server method once; that installs the updater. After that, the **Updates** tab works.
+
+How the portal updater stays safe:
+- Signer runs as an unprivileged user and cannot update itself. Pressing **Install update** only writes a request file in `/var/lib/signer/update/`.
+- A systemd path unit (`signer-update.path`) starts the root-owned `/usr/local/sbin/signer-update`. That script never runs code from the checkout as root: git and npm run as `signer`.
+- It can only install the latest commit of the branch already installed. The request's contents are ignored.
+- Its status and log are in `/var/lib/signer/update/`, and in the **Updates** tab.
+
 ### Operations
 
-**Updating.** `sudo bash /opt/signer/deploy/install.sh`. It pulls the latest `main`, rebuilds, restarts Signer and reports health. Your configuration is kept. Local changes to files in `/opt/signer` are discarded, so keep configuration in `/etc/signer/signer.env`. Restarting drops SMTP connections in progress; Microsoft and Google retry them.
+**Updating.** From the portal or the server: see [Updating an existing install](#updating-an-existing-install).
 
 **Configuration changes.** Edit `/etc/signer/signer.env`, then `systemctl restart signer`.
 
@@ -323,6 +377,9 @@ In [admin.google.com](https://admin.google.com) → Apps → Google Workspace �
 - **OIDC redirect mismatch** → `PUBLIC_URL` and the Entra/Google redirect URI must match exactly (`https://host`, no trailing slash in `PUBLIC_URL`).
 - **Super admin cannot sign in** → the mailbox must match `SUPER_ADMIN_EMAIL` (case-insensitive).
 - **Connector loop** → the transport rule or content compliance rule must skip mail whose processed header is `true`.
+- **Directory sync says `Authorization_RequestDenied` / "Insufficient privileges"** → the Entra app has the sync permissions as **Delegated**, or without admin consent. Add `User.Read.All`, `Group.Read.All` and `GroupMember.Read.All` as **Application** permissions on the same app and grant admin consent ([step 5](#5-create-the-sign-in-app)).
+- **A sender gets no signature, and Activity says the domain is not one of this organisation's domains** → add the domain under **Mail flow → Domains**.
+- **A portal update fails or rolls back** → the **Updates** tab shows the updater's log (also `/var/lib/signer/update/last.log`). Signer keeps running the previous version. Re-running the install script from the server is always safe.
 - **Empty signature fields** → run directory sync. Users only exist in the cache after an Entra/Google sync (or the demo seed).
 - **Logo upload rejected with 415** → only PNG, JPEG, GIF and WEBP are accepted, judged by file contents, not extension. SVG is refused deliberately: email clients do not render it (see [Portal hardening](#portal-hardening)).
 - **Sign-in returns 429** → the per-IP limit on sign-in routes. If everyone hits it together, the proxy's address is being counted instead of the client's: check that `TRUST_PROXY=loopback` and that Nginx still sets `X-Forwarded-For` (`/etc/nginx/sites-available/signer`, rewritten by each run of the script).
@@ -350,6 +407,8 @@ docker compose logs -f --tail=80
 - **User details** — employees edit only admin-unlocked fields
 - **RBAC** — owner / admin / editor / designer / user. Admins manage roles, but only `SUPER_ADMIN_EMAIL` can grant `owner`
 - **Uploads** — PNG, JPEG, GIF and WEBP artwork, validated by file contents rather than extension
+- **Domains** — every email domain in the tenant, managed in the portal; decides who is signed and who is internal ([Domains](#domains))
+- **Updates** — check GitHub for new versions and install them from the portal, with automatic rollback ([Updating](#updating-an-existing-install))
 - **Analytics** — counts and a 30-day activity log of senders and recipients; message content is never stored ([PRIVACY.md](PRIVACY.md))
 
 ## Local development
@@ -387,6 +446,7 @@ See `.env.example` for the full list with comments. The keys that matter most:
 | `HTTP_HOST` / `HTTP_PORT` | `0.0.0.0` / `3000` | `127.0.0.1` when a proxy on the same machine fronts the portal (the install script sets this) |
 | `TRUST_PROXY` | `loopback` | Peers allowed to set `X-Forwarded-For`. Names (`loopback`, `uniquelocal`) or addresses; not a hop count |
 | `SUPER_ADMIN_EMAIL` | — | Break-glass owner; the only account that can grant the `owner` role |
+| `PRIMARY_DOMAIN` | super admin's domain | Seeds the [domain list](#domains) on first start; manage domains in the portal after that |
 | `SESSION_SECRET` | — | **Required.** The server exits without it unless `DEMO_MODE=true` |
 | `SMTP_ALLOWED_CIDRS` | empty | CIDRs, or `microsoft` / `google`. Empty accepts mail from anyone |
 | `SMTP_RANGE_REFRESH_MINUTES` | `720` | How often provider ranges are re-resolved; `0` disables |
@@ -423,6 +483,24 @@ The server validates its configuration before it listens:
 
 Read the deploy log after the first start — every one of these is something that
 will bite later.
+
+## Domains
+
+One Signer serves one Microsoft 365 or Google Workspace tenant, and a tenant often owns several email domains: a main brand, a subsidiary, a legacy name. **Mail flow → Domains** in the portal lists them.
+
+The list controls two things:
+
+- **Who is signed.** Only senders whose address is on a listed domain get a signature, disclaimer or campaign. Mail from any other domain passes through unchanged, and the Activity log and rule tester say why.
+- **Who is internal.** Recipients on a listed domain count as *internal* in rules, so an external-only disclaimer is not added to mail between your own domains.
+
+How it is managed:
+
+- The installer sets the **primary domain** (`PRIMARY_DOMAIN`, defaulting to the super admin's domain). The primary domain cannot be removed until another domain is made primary.
+- Admins add and remove the other domains in the portal. **Found in the directory** lists domains your synced staff use that are not yet on the list.
+- Nothing changes in Exchange or Google when you add a domain. The transport rule and content compliance rule already cover every domain in the tenant.
+- Entra **guest** accounts are skipped during directory sync. They carry a partner's address, and used to make that partner's domain look internal.
+
+`PRIMARY_DOMAIN` only seeds the list the first time Signer starts. After that, the portal is the source of truth.
 
 ## Provider IP ranges
 

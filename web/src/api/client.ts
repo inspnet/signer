@@ -109,6 +109,29 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+export type DomainRecord = { name: string; primary: boolean; addedAt: string; addedBy: string };
+
+export type Version = { commit: string; date: string; subject: string; branch: string; remote: string };
+
+export type UpdateCheck = {
+  current: Version;
+  latest: { commit: string; date?: string; subject?: string };
+  updateAvailable: boolean;
+  commits: Array<{ commit: string; date: string; subject: string; author: string }>;
+  installerChanged: boolean;
+  checkedAt: string;
+};
+
+export type UpdateStatus = {
+  state: "idle" | "requested" | "running" | "succeeded" | "failed" | "rolled-back" | "current";
+  message: string;
+  from?: string;
+  to?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  log: string[];
+};
+
 export const api = {
   bootstrap: () =>
     request<{
@@ -163,5 +186,13 @@ export const api = {
   settings: () => request<Record<string, unknown>>("/api/settings"),
   saveSettings: (body: object) => request("/api/settings", { method: "PUT", body: JSON.stringify(body) }),
   mailFlow: () => request<Record<string, unknown>>("/api/mail-flow"),
+  domains: () => request<{ domains: DomainRecord[]; suggestions: Array<{ domain: string; people: number }> }>("/api/domains"),
+  addDomain: (name: string) => request<DomainRecord>("/api/domains", { method: "POST", body: JSON.stringify({ name }) }),
+  removeDomain: (name: string) => request(`/api/domains/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  makePrimaryDomain: (name: string) => request(`/api/domains/${encodeURIComponent(name)}/primary`, { method: "PUT", body: "{}" }),
+  updates: () => request<{ available: boolean; current: Version | null; status: UpdateStatus }>("/api/system/updates"),
+  checkUpdates: () => request<UpdateCheck>("/api/system/updates/check", { method: "POST", body: "{}" }),
+  updateStatus: () => request<UpdateStatus>("/api/system/updates/status"),
+  installUpdate: () => request<{ ok: boolean }>("/api/system/updates/install", { method: "POST", body: "{}" }),
   analytics: () => request<{ processed24h: number; signed24h: number; failed24h: number; recent: Array<{ receivedAt: string; sender: string; subject: string; status: string; processingMs: number }> }>("/api/analytics")
 };

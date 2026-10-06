@@ -42,6 +42,8 @@ const dataDir = path.resolve(env("DATA_DIR", "./data"));
 export const config = {
   publicUrl: env("PUBLIC_URL", "http://localhost:3000").replace(/\/$/, ""),
   superAdminEmail: env("SUPER_ADMIN_EMAIL").toLowerCase(),
+  /** The organisation's main email domain. Only seeds the domain list; manage the rest in the portal. */
+  primaryDomain: env("PRIMARY_DOMAIN").toLowerCase().replace(/^@/, ""),
   sessionSecret: env("SESSION_SECRET"),
   databasePath: path.resolve(env("DATABASE_PATH", path.join(dataDir, "signer.db"))),
   dataDir,
@@ -96,9 +98,7 @@ export const config = {
   entra: {
     tenantId: env("ENTRA_TENANT_ID"),
     clientId: env("ENTRA_CLIENT_ID"),
-    clientSecret: env("ENTRA_CLIENT_SECRET"),
-    directoryClientId: env("ENTRA_DIRECTORY_CLIENT_ID") || env("ENTRA_CLIENT_ID"),
-    directoryClientSecret: env("ENTRA_DIRECTORY_CLIENT_SECRET") || env("ENTRA_CLIENT_SECRET")
+    clientSecret: env("ENTRA_CLIENT_SECRET")
   },
   google: {
     clientId: env("GOOGLE_CLIENT_ID"),
@@ -207,6 +207,16 @@ export function validateConfig(): { fatal: string[]; warnings: string[] } {
 
   if (!config.demoMode && !entraConfigured() && !googleLoginConfigured()) {
     warnings.push("Neither Entra nor Google login is configured; nobody can sign in to the portal.");
+  }
+
+  // Sync now always uses the sign-in app; a separate directory app is no longer read.
+  for (const legacy of ["ENTRA_DIRECTORY_CLIENT_ID", "ENTRA_DIRECTORY_CLIENT_SECRET"]) {
+    if (env(legacy)) {
+      warnings.push(
+        `${legacy} is no longer used: directory sync uses ENTRA_CLIENT_ID / ENTRA_CLIENT_SECRET. Remove it, and give ` +
+          "that app the Application permissions User.Read.All, Group.Read.All and GroupMember.Read.All."
+      );
+    }
   }
 
   if (!config.superAdminEmail) {
