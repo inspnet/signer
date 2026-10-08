@@ -65,12 +65,28 @@ export type TextStyle = {
 export type Block =
   | { id: string; type: "text"; content: string; style?: TextStyle; href?: string; underline?: boolean }
   | { id: string; type: "field"; field: string; prefix?: string; suffix?: string; style?: TextStyle; link?: "email" | "phone" | "url" | "none" }
-  | { id: string; type: "image"; src: string; width?: number; alt?: string; href?: string }
+  | { id: string; type: "image"; src: string; width?: number; height?: number; original?: string; alt?: string; href?: string }
   | { id: string; type: "social"; networks: Array<{ name: "linkedin" | "x" | "facebook" | "instagram" | "website"; urlField?: string; url?: string }>; iconSize?: number }
   | { id: string; type: "divider"; color?: string; height?: number }
   | { id: string; type: "spacer"; height?: number }
-  | { id: string; type: "banner"; src: string; href?: string; alt?: string; width?: number }
-  | { id: string; type: "row"; columns: Array<{ width: string; blocks: Block[] }> };
+  | { id: string; type: "banner"; src: string; href?: string; alt?: string; width?: number; height?: number; original?: string }
+  | { id: string; type: "row"; columns: Array<{ width: string; blocks: Block[] }> }
+  | { id: string; type: "table"; columns: string[]; rows: TableCell[][] };
+
+export type CellSide = "top" | "right" | "bottom" | "left";
+
+/** A table cell. The grid is full: cells covered by another cell's span are marked merged. */
+export type TableCell = {
+  blocks: Block[];
+  colSpan?: number;
+  rowSpan?: number;
+  merged?: boolean;
+  align?: "left" | "center" | "right";
+  valign?: "top" | "middle" | "bottom";
+  padding?: Partial<Record<CellSide, number>>;
+  background?: string;
+  border?: { sides: CellSide[]; color?: string; width?: number };
+};
 
 /** fontUnit "pt": text sizes are points. Older designs have none, and sizes in pixels. */
 export type Design = { width: number; background?: string; blocks: Block[]; fontUnit?: "pt" };

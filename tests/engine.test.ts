@@ -284,6 +284,65 @@ describe("design renderer", () => {
   });
 });
 
+describe("design renderer: tables and images", () => {
+  it("renders a table with column and row spans, widths, padding and borders", () => {
+    const user = emptyUser("scott@inspired.co");
+    user.displayName = "Scott Williamson";
+    const html = renderDesign(
+      {
+        width: 520,
+        blocks: [
+          {
+            id: "t",
+            type: "table",
+            columns: ["90", "200", "150"],
+            rows: [
+              [
+                {
+                  blocks: [{ id: "p", type: "text", content: "Logo" }],
+                  rowSpan: 2,
+                  valign: "middle",
+                  padding: { right: 12 },
+                  border: { sides: ["right"], color: "#0f766e", width: 2 }
+                },
+                { blocks: [{ id: "n", type: "field", field: "displayName" }], colSpan: 2 },
+                { blocks: [], merged: true }
+              ],
+              [{ blocks: [], merged: true }, { blocks: [{ id: "a", type: "text", content: "A" }] }, { blocks: [], align: "right", background: "#f1f5fa" }]
+            ]
+          }
+        ]
+      },
+      user
+    );
+    expect(html).toContain('<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="440" style="width:440px;border-collapse:collapse;">');
+    expect(html).toContain('<td rowspan="2" width="90" valign="middle" style="padding:0px 12px 0px 0px;border-right:2px solid #0f766e;">');
+    expect(html).toContain('<td colspan="2" width="350" valign="top" style="padding:0px 0px 0px 0px;">');
+    expect(html).toContain("Scott Williamson");
+    expect(html).toContain('<td width="150" valign="top" align="right" style="padding:0px 0px 0px 0px;text-align:right;background:#f1f5fa;"></td>');
+    // Two rows and four cells, plus the signature's own wrapper; merged cells are not written out.
+    expect(html.match(/<tr>/g)).toHaveLength(3);
+    expect(html.match(/<td /g)).toHaveLength(5);
+  });
+
+  it("leaves out a table with nothing in it", () => {
+    const user = emptyUser("scott@inspired.co");
+    const html = renderDesign(
+      { width: 520, blocks: [{ id: "t", type: "table", columns: ["", ""], rows: [[{ blocks: [{ id: "f", type: "field", field: "mobile" }] }, { blocks: [] }]] }] },
+      user
+    );
+    expect(html).not.toContain("<td width");
+    expect(html).not.toContain("<tr><td valign");
+  });
+
+  it("gives a fitted image its height, for Outlook, and height:auto for everyone else", () => {
+    const user = emptyUser("scott@inspired.co");
+    const html = renderDesign({ width: 520, blocks: [{ id: "i", type: "image", src: "/uploads/2_logo-280w.png", width: 140, height: 35 }] }, user);
+    expect(html).toContain('width="140" height="35"');
+    expect(html).toContain("height:auto;");
+  });
+});
+
 describe("end-to-end processing", () => {
   it("applies the first matching signature and loop header", async () => {
     const raw = Buffer.from(
