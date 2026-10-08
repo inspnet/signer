@@ -62,6 +62,8 @@ New messages (no quote markup) still get the signature at the end of the body. B
 
 **Uploaded images are embedded.** A logo or banner uploaded in the designer travels inside each message as an inline image (`cid:`), so recipients see it without "download pictures" prompts and nothing is fetched from Signer when a message is opened. Images given as links (`https://…`, or a directory photo URL) stay links.
 
+**Uploaded images are resized to fit.** Upload the full-size logo: when the signature is saved, the designer re-saves each uploaded image at twice the width it is placed at (sharp on high-resolution screens, never enlarged) and writes its width and height into the HTML, which Outlook on Windows needs to size it. The first upload is kept, so making an image bigger later resizes from the full-size file. GIFs are left as uploaded so animation survives; WEBP is saved as PNG, which Outlook can show.
+
 ---
 
 ## Deploy
@@ -457,7 +459,7 @@ docker compose logs -f --tail=80
 
 ## Product surface
 
-- **Signatures** — create, folders, evaluation order, block designer, HTML fields from the directory
+- **Signatures** — create, folders, evaluation order, block designer (drag to move, multi-select, tables with merged cells, resize images on the letter), HTML fields from the directory
 - **Rules** — senders, exceptions, groups/domains, internal vs external recipients, date/time with a per-rule timezone, reply/thread advanced rules
 - **Disclaimers** — separate legal notices with the same rules as signatures: sender domain (for example, a different legal entity per domain), group or address, exceptions, recipients (external only), schedule and subject or reply conditions. Unlike signatures, where the first match wins, every disclaimer whose rules match is added
 - **Campaigns** — banner images with the same rule engine

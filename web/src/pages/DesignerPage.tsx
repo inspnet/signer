@@ -1,37 +1,51 @@
-import { useEffect, useMemo, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type DragEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowDown,
   ArrowUp,
   Copy,
+  Grid2x2,
   Image as ImageIcon,
   Minus,
   Share2,
   Trash2,
   Type,
+  Undo2,
   UserRound
 } from "lucide-react";
-import { api, type Block, type DirectoryPerson, type Signature } from "../api/client";
+import { api, type Block, type CellSide, type DirectoryPerson, type Signature, type TableCell } from "../api/client";
 import { DIRECTORY_FIELDS } from "../lib/fields";
 import { APTOS_STACK, FONTS, inPoints } from "../lib/fonts";
-
+import { defaultWidth, fitImages, isUpload, loadImage, planFit, type FitPlan } from "../lib/images";
+import { CanvasProvider, LiveBlock, blockLabel, edgeTarget, sameTarget, useCanvasState, useSlotDrop, type CanvasState, type PreviewUser } from "../lib/preview";
 import {
-  LiveBlock,
-  blockLabel,
-  duplicateBlock,
+  anchorOf,
+  deleteColumn,
+  deleteRow,
+  duplicateBlocks,
   findBlock,
   flattenBlocks,
   insertAfter,
+  insertAt,
+  insertColumn,
+  insertRow,
+  mergeCells,
   moveBlock,
-  mutateDesign,
-  removeBlock,
+  moveBlocks,
+  newTable,
+  nid,
+  removeBlocks,
   replaceBlock,
-  type PreviewUser
-} from "../lib/preview";
+  rowToTable,
+  splitCell,
+  updateCell,
+  cellKey,
+  contains,
+  type DropTarget
+} from "../lib/tree";
 
-function nid() {
-  return `b_${Math.random().toString(36).slice(2, 10)}`;
-}
+type Table = Extract<Block, { type: "table" }>;
+type Cell = { table: string; r: number; c: number };
 
 function field(name: string, style: object = {}, link: "email" | "phone" | "url" | "none" = "none"): Block {
   return {
@@ -41,6 +55,14 @@ function field(name: string, style: object = {}, link: "email" | "phone" | "url"
     style: { fontFamily: APTOS_STACK, fontSize: 10, color: "#1c1917", ...style },
     link
   };
+}
+
+function photoAndDetails(): Table {
+  const t = newTable(1, 2);
+  t.columns = ["88", "360"];
+  t.rows[0]![0] = { blocks: [{ id: nid(), type: "image", src: "{{photoUrl}}", width: 72, alt: "Photo" }], padding: { right: 12 } };
+  t.rows[0]![1] = { blocks: [field("displayName", { bold: true, fontSize: 12, color: "#0f766e" }), field("jobTitle"), field("email", {}, "email")] };
+  return t;
 }
 
 const chips: Array<{ label: string; icon: ComponentType<{ size?: number; className?: string }>; make: () => Block }> = [
@@ -67,19 +89,32 @@ const chips: Array<{ label: string; icon: ComponentType<{ size?: number; classNa
     })
   },
   { label: "Rule", icon: Minus, make: () => ({ id: nid(), type: "divider", color: "#0f766e", height: 2 }) },
-  { label: "Space", icon: Minus, make: () => ({ id: nid(), type: "spacer", height: 10 }) }
+  { label: "Space", icon: Minus, make: () => ({ id: nid(), type: "spacer", height: 10 }) },
+  { label: "Table", icon: Grid2x2, make: () => newTable(2, 2) },
+  { label: "Photo + details", icon: UserRound, make: photoAndDetails }
 ];
+
+/** Edits typed within this long of each other undo as one step. */
+const UNDO_COALESCE_MS = 800;
 
 export function DesignerPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [sig, setSig] = useState<Signature | null>(null);
   const [saved, setSaved] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [activeCell, setActiveCell] = useState<Cell | null>(null);
   const [users, setUsers] = useState<DirectoryPerson[]>([]);
   const [previewEmail, setPreviewEmail] = useState("");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const [dragging, setDragging] = useState<ReadonlySet<string> | null>(null);
+  const [drop, setDrop] = useState<DropTarget | null>(null);
+  const history = useRef<{ stack: Signature[]; at: number }>({ stack: [], at: 0 });
+  const lastClicked = useRef<string | null>(null);
+  // The signature as of the latest edit, so several edits in one event build on each other.
+  const sigRef = useRef<Signature | null>(null);
+  sigRef.current = sig;
 
   useEffect(() => {
     if (!id) return;
@@ -100,22 +135,67 @@ export function DesignerPage() {
     [users, previewEmail]
   );
   const dirty = sig ? JSON.stringify({ name: sig.name, design: sig.design }) !== saved : false;
-  const selectedBlock = sig && selected ? findBlock(sig.design.blocks, selected) : null;
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  const single = sig && selected.length === 1 ? findBlock(sig.design.blocks, selected[0]!) : null;
+
+  /** Change the signature, keeping the previous version for undo. */
+  const patch = useCallback((fn: (s: Signature) => Signature, coalesce = false) => {
+    const s = sigRef.current;
+    if (!s) return;
+    const next = fn(s);
+    if (next === s) return;
+    const h = history.current;
+    const now = Date.now();
+    if (!(coalesce && now - h.at < UNDO_COALESCE_MS)) h.stack = [...h.stack.slice(-99), s];
+    h.at = now;
+    sigRef.current = next;
+    setSig(next);
+  }, []);
+
+  const editBlocks = useCallback(
+    (fn: (blocks: Block[]) => Block[], coalesce = false) => patch((s) => ({ ...s, design: { ...s.design, blocks: fn(s.design.blocks) } }), coalesce),
+    [patch]
+  );
+
+  const undo = useCallback(() => {
+    const previous = history.current.stack.pop();
+    if (!previous) return;
+    history.current.at = 0;
+    sigRef.current = previous;
+    setSig(previous);
+    setSelected((ids) => ids.filter((x) => findBlock(previous.design.blocks, x)));
+    setActiveCell(null);
+  }, []);
+
+  const deleteSelected = useCallback(() => {
+    if (!selected.length) return;
+    editBlocks((b) => removeBlocks(b, new Set(selected)));
+    setSelected([]);
+    setActiveCell(null);
+  }, [selected, editBlocks]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if ((e.key === "Backspace" || e.key === "Delete") && selected) {
+      const el = e.target as HTMLElement | null;
+      const typing = el?.tagName === "INPUT" || el?.tagName === "TEXTAREA" || el?.tagName === "SELECT" || el?.isContentEditable;
+      if (typing) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
         e.preventDefault();
-        patch((s) => ({ ...s, design: mutateDesign(s.design, (b) => removeBlock(b, selected)) }));
-        setSelected(null);
+        undo();
       }
-      if (e.key === "Escape") setSelected(null);
+      // With a table cell active, Delete would take the whole table; the inspector's bin does that on purpose.
+      if ((e.key === "Backspace" || e.key === "Delete") && selected.length && !activeCell) {
+        e.preventDefault();
+        deleteSelected();
+      }
+      if (e.key === "Escape") {
+        setSelected([]);
+        setActiveCell(null);
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected]);
+  }, [selected, activeCell, undo, deleteSelected]);
 
   useEffect(() => {
     function warn(e: BeforeUnloadEvent) {
@@ -127,23 +207,82 @@ export function DesignerPage() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
 
-  function patch(fn: (s: Signature) => Signature) {
-    setSig((s) => (s ? fn(s) : s));
-  }
+  const select = useCallback(
+    (blockId: string, additive: boolean, range = false) => {
+      setActiveCell(null);
+      if (range && sig && lastClicked.current) {
+        const order = flattenBlocks(sig.design.blocks).map(({ block }) => block.id);
+        const a = order.indexOf(lastClicked.current);
+        const b = order.indexOf(blockId);
+        if (a !== -1 && b !== -1) {
+          const span = order.slice(Math.min(a, b), Math.max(a, b) + 1);
+          setSelected((ids) => [...new Set([...ids, ...span])]);
+          return;
+        }
+      }
+      lastClicked.current = blockId;
+      setSelected((ids) => (additive ? (ids.includes(blockId) ? ids.filter((x) => x !== blockId) : [...ids, blockId]) : [blockId]));
+    },
+    [sig]
+  );
+
+  const canvas: CanvasState = {
+    user,
+    selected: selectedSet,
+    onSelect: (blockId, additive) => select(blockId, additive),
+    activeCell,
+    onSelectCell: (table, r, c) => {
+      setSelected([table]);
+      setActiveCell({ table, r, c });
+    },
+    dragging,
+    drop,
+    onDragStart: (blockId) => {
+      // Dragging one of several selected blocks moves them all.
+      const ids = selectedSet.has(blockId) ? selectedSet : new Set([blockId]);
+      if (!selectedSet.has(blockId)) setSelected([blockId]);
+      setDragging(ids);
+    },
+    onDragOver: setDrop,
+    onDrop: () => {
+      if (dragging && drop) editBlocks((b) => moveBlocks(b, dragging, drop));
+      setDragging(null);
+      setDrop(null);
+    },
+    onDragEnd: () => {
+      setDragging(null);
+      setDrop(null);
+    },
+    onResize: (blockId, width) =>
+      editBlocks((blocks) => {
+        const b = findBlock(blocks, blockId);
+        return b && (b.type === "image" || b.type === "banner") ? replaceBlock(blocks, { ...b, width }) : blocks;
+      }, true),
+    maxWidth: sig?.design.width ?? 520
+  };
 
   if (!sig) return <p className="p-8 text-slate-500">Loading editor…</p>;
   const current = sig;
 
   function add(block: Block) {
-    patch((s) => ({ ...s, design: mutateDesign(s.design, (blocks) => insertAfter(blocks, selected, block)) }));
-    setSelected(block.id);
+    const cell = activeCell && selected.length === 1 && selected[0] === activeCell.table ? activeCell : null;
+    editBlocks((blocks) => {
+      if (cell) return insertAt(blocks, { into: { container: cell.table, key: cellKey(cell.r, cell.c) } }, [block]);
+      return insertAfter(blocks, selected.length === 1 ? selected[0]! : null, block);
+    });
+    setSelected([block.id]);
+    setActiveCell(null);
   }
 
   async function save() {
     setSaving(true);
     try {
-      await api.saveSignature(current.id, { name: current.name, design: current.design });
-      setSaved(JSON.stringify({ name: current.name, design: current.design }));
+      setStatus("Fitting images…");
+      const design = await fitImages(current.design, api.uploadImage);
+      if (design !== current.design) patch((s) => ({ ...s, design }));
+      setStatus("Saving…");
+      await api.saveSignature(current.id, { name: current.name, design });
+      setSaved(JSON.stringify({ name: current.name, design }));
       setStatus("Saved");
       setTimeout(() => setStatus(""), 1500);
     } catch (err) {
@@ -163,7 +302,7 @@ export function DesignerPage() {
         <input
           className="font-semibold bg-transparent outline-none flex-1 text-white min-w-0"
           value={sig.name}
-          onChange={(e) => patch((s) => ({ ...s, name: e.target.value }))}
+          onChange={(e) => patch((s) => ({ ...s, name: e.target.value }), true)}
         />
         <label className="hidden md:flex items-center gap-2 text-sm text-slate-400">
           Preview as
@@ -174,13 +313,21 @@ export function DesignerPage() {
           >
             {users.map((u) => (
               <option key={u.email} value={u.email} className="text-ink">
-                    {u.displayName || u.email} ({u.email})
+                {u.displayName || u.email} ({u.email})
               </option>
             ))}
           </select>
         </label>
         {dirty && <span className="text-xs text-amber-200 bg-amber-900/40 px-2 py-0.5 rounded-md">Unsaved</span>}
         {status && <span className="text-xs text-sky-200">{status}</span>}
+        <button
+          className="btn btn-ghost bg-transparent text-slate-300 border-white/15 hover:bg-white/10 px-2"
+          title="Undo (Ctrl+Z / ⌘Z)"
+          disabled={!history.current.stack.length}
+          onClick={undo}
+        >
+          <Undo2 size={16} />
+        </button>
         <button className="btn btn-ghost bg-transparent text-slate-300 border-white/15 hover:bg-white/10" onClick={() => navigate("/signatures")}>
           Close
         </button>
@@ -197,121 +344,180 @@ export function DesignerPage() {
             {item.label}
           </button>
         ))}
-        <button
-          className="chip"
-          type="button"
-          onClick={() =>
-            add({
-              id: nid(),
-              type: "row",
-              columns: [
-                { width: "88", blocks: [{ id: nid(), type: "image", src: "{{photoUrl}}", width: 72, alt: "Photo" }] },
-                {
-                  width: "360",
-                  blocks: [field("displayName", { bold: true, fontSize: 12, color: "#0f766e" }), field("jobTitle"), field("email", {}, "email")]
-                }
-              ]
-            })
-          }
-        >
-          <UserRound size={14} />
-          Photo + details
-        </button>
       </div>
 
-      <div className="flex flex-1 min-h-0">
-        <section className="flex-1 overflow-auto p-8" onClick={() => setSelected(null)}>
-          <div className="max-w-[680px] mx-auto">
-            <div className="letter" onClick={(e) => e.stopPropagation()}>
-              <div className="bg-[#f8fafc] px-7 py-4 border-b border-line text-[13px] space-y-1.5">
-                <div className="flex gap-3">
-                  <span className="w-12 text-slate-400 shrink-0">From</span>
-                  <span>
-                    {String(user.displayName || "Sender")} <span className="text-slate-500">&lt;{String(user.email || "")}&gt;</span>
-                  </span>
+      <CanvasProvider value={canvas}>
+        <div className="flex flex-1 min-h-0">
+          <section
+            className="flex-1 overflow-auto p-8"
+            onClick={() => {
+              setSelected([]);
+              setActiveCell(null);
+            }}
+          >
+            <div className="max-w-[680px] mx-auto">
+              <div className="letter" onClick={(e) => e.stopPropagation()}>
+                <div className="bg-[#f8fafc] px-7 py-4 border-b border-line text-[13px] space-y-1.5">
+                  <div className="flex gap-3">
+                    <span className="w-12 text-slate-400 shrink-0">From</span>
+                    <span>
+                      {String(user.displayName || "Sender")} <span className="text-slate-500">&lt;{String(user.email || "")}&gt;</span>
+                    </span>
+                  </div>
+                  <div className="flex gap-3">
+                    <span className="w-12 text-slate-400 shrink-0">To</span>
+                    <span>Ada Lovelace &lt;ada@contoso.com&gt;</span>
+                  </div>
+                  <div className="flex gap-3">
+                    <span className="w-12 text-slate-400 shrink-0">Subject</span>
+                    <span className="font-medium">Project update</span>
+                  </div>
                 </div>
-                <div className="flex gap-3">
-                  <span className="w-12 text-slate-400 shrink-0">To</span>
-                  <span>Ada Lovelace &lt;ada@contoso.com&gt;</span>
-                </div>
-                <div className="flex gap-3">
-                  <span className="w-12 text-slate-400 shrink-0">Subject</span>
-                  <span className="font-medium">Project update</span>
+                <div className="bg-white px-7 py-8 min-h-[320px]">
+                  <p className="text-[15px] text-slate-600 mb-8 leading-7">Hello — thanks for the note. See you Thursday.</p>
+                  <RootList blocks={sig.design.blocks} />
                 </div>
               </div>
-              <div className="bg-white px-7 py-8 min-h-[320px]">
-                <p className="text-[15px] text-slate-600 mb-8 leading-7">Hello — thanks for the note. See you Thursday.</p>
-                <div className="space-y-1 border-l-2 border-accent/30 pl-4">
-                  {sig.design.blocks.map((b) => (
-                    <LiveBlock key={b.id} block={b} user={user} selected={selected} onSelect={setSelected} />
-                  ))}
-                  {sig.design.blocks.length === 0 && (
-                    <p className="text-slate-400 text-sm">Use Insert above. Click a line to style it.</p>
-                  )}
-                </div>
-              </div>
+              <p className="text-center text-xs text-slate-500 mt-4">
+                Drag to move. Shift- or ⌘/Ctrl-click to select several. Live values from the directory; empty fields stay as placeholders.
+              </p>
             </div>
-            <p className="text-center text-xs text-slate-500 mt-4">Live values from the directory. Empty fields stay as placeholders until the person has data.</p>
-          </div>
-        </section>
+          </section>
 
-        <aside className="w-[300px] shrink-0 border-l border-line overflow-auto bg-card flex flex-col">
-          <div className="p-4 border-b border-line">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500 mb-2">Layers</p>
-            <div className="space-y-0.5">
-              {flattenBlocks(sig.design.blocks).map(({ block, depth }) => (
-                <button
-                  key={block.id}
-                  type="button"
-                  className={`w-full text-left text-xs rounded-md px-2 py-1.5 ${selected === block.id ? "bg-accent text-white" : "hover:bg-mist text-slate-600"}`}
-                  style={{ paddingLeft: 8 + depth * 12 }}
-                  onClick={() => setSelected(block.id)}
-                >
-                  {blockLabel(block)}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="p-4 flex-1">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500 mb-3">Inspector</p>
-            {!selectedBlock && <p className="text-sm text-slate-500">Select a line on the letter, or a layer on the left of this panel.</p>}
-            {selectedBlock && (
-              <>
-                <div className="flex gap-1 mb-4">
-                  <button className="btn btn-ghost px-2" title="Up" onClick={() => patch((s) => ({ ...s, design: mutateDesign(s.design, (b) => moveBlock(b, selectedBlock.id, -1)) }))}>
-                    <ArrowUp size={14} />
-                  </button>
-                  <button className="btn btn-ghost px-2" title="Down" onClick={() => patch((s) => ({ ...s, design: mutateDesign(s.design, (b) => moveBlock(b, selectedBlock.id, 1)) }))}>
-                    <ArrowDown size={14} />
-                  </button>
-                  <button className="btn btn-ghost px-2" title="Duplicate" onClick={() => patch((s) => ({ ...s, design: mutateDesign(s.design, (b) => duplicateBlock(b, selectedBlock.id)) }))}>
-                    <Copy size={14} />
-                  </button>
-                  <button
-                    className="btn btn-ghost px-2 text-rose-700 ml-auto"
-                    title="Delete"
-                    onClick={() => {
-                      patch((s) => ({ ...s, design: mutateDesign(s.design, (b) => removeBlock(b, selectedBlock.id)) }));
-                      setSelected(null);
-                    }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+          <aside className="w-[320px] shrink-0 border-l border-line overflow-auto bg-card flex flex-col">
+            <Layers blocks={sig.design.blocks} selected={selectedSet} onSelect={select} />
+            <div className="p-4 flex-1">
+              <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500 mb-3">Inspector</p>
+              {selected.length === 0 && <p className="text-sm text-slate-500">Select a line on the letter, or a layer above.</p>}
+              {selected.length > 1 && (
+                <div className="space-y-3 text-sm">
+                  <div className="font-medium">{selected.length} selected</div>
+                  <div className="flex gap-2">
+                    <button className="btn btn-ghost" onClick={() => editBlocks((b) => duplicateBlocks(b, selectedSet))}>
+                      <Copy size={14} /> Duplicate
+                    </button>
+                    <button className="btn btn-ghost text-rose-700" onClick={deleteSelected}>
+                      <Trash2 size={14} /> Delete {selected.length}
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-5">Delete or Backspace removes them; ⌘/Ctrl+Z brings them back. Drag any of them to move them together.</p>
                 </div>
-                <Inspector
-                  block={selectedBlock}
-                  onChange={(next) => patch((s) => ({ ...s, design: mutateDesign(s.design, (b) => replaceBlock(b, next)) }))}
-                />
-              </>
-            )}
-          </div>
-        </aside>
+              )}
+              {single && (
+                <>
+                  <div className="flex gap-1 mb-4">
+                    <button className="btn btn-ghost px-2" title="Up" onClick={() => editBlocks((b) => moveBlock(b, single.id, -1))}>
+                      <ArrowUp size={14} />
+                    </button>
+                    <button className="btn btn-ghost px-2" title="Down" onClick={() => editBlocks((b) => moveBlock(b, single.id, 1))}>
+                      <ArrowDown size={14} />
+                    </button>
+                    <button className="btn btn-ghost px-2" title="Duplicate" onClick={() => editBlocks((b) => duplicateBlocks(b, new Set([single.id])))}>
+                      <Copy size={14} />
+                    </button>
+                    <button className="btn btn-ghost px-2 text-rose-700 ml-auto" title="Delete" onClick={deleteSelected}>
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  <Inspector
+                    block={single}
+                    activeCell={activeCell?.table === single.id ? activeCell : null}
+                    onCell={setActiveCell}
+                    onChange={(next) => editBlocks((b) => replaceBlock(b, next), true)}
+                  />
+                </>
+              )}
+            </div>
+          </aside>
+        </div>
+      </CanvasProvider>
+    </div>
+  );
+}
+
+function RootList({ blocks }: { blocks: Block[] }) {
+  const slot = useSlotDrop({ container: null, key: "root" });
+  return (
+    <div {...slot.props} className={`space-y-1 border-l-2 border-accent/30 pl-4 pb-4 ${slot.active ? "border-accent" : ""}`}>
+      {blocks.map((b) => (
+        <LiveBlock key={b.id} block={b} />
+      ))}
+      {blocks.length === 0 && <p className="text-slate-400 text-sm">Use Insert above. Click a line to style it.</p>}
+    </div>
+  );
+}
+
+/**
+ * The layer list: the same tree as the letter, sharing its drag, so a layer
+ * can be dropped among the layers or onto the letter. Shift-click selects a
+ * range, ⌘/Ctrl-click adds or removes one.
+ */
+function Layers({
+  blocks,
+  selected,
+  onSelect
+}: {
+  blocks: Block[];
+  selected: ReadonlySet<string>;
+  onSelect: (id: string, additive: boolean, range?: boolean) => void;
+}) {
+  const ctx = useCanvasState();
+  const moving = ctx.dragging ? [...ctx.dragging].map((id) => findBlock(blocks, id)).filter((b): b is Block => b !== null) : [];
+  return (
+    <div className="p-4 border-b border-line">
+      <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500 mb-2">Layers</p>
+      <div className="space-y-0.5">
+        {flattenBlocks(blocks).map(({ block, depth }) => {
+          const isOn = selected.has(block.id);
+          const drop = ctx.drop;
+          const line = drop && "before" in drop && drop.before === block.id ? "before" : drop && "after" in drop && drop.after === block.id ? "after" : null;
+          const isMoving = moving.some((m) => contains(m, block.id));
+          return (
+            <button
+              key={block.id}
+              type="button"
+              draggable
+              className={`relative w-full text-left text-xs rounded-md px-2 py-1.5 cursor-grab ${isOn ? "bg-accent text-white" : "hover:bg-mist text-slate-600"} ${isMoving ? "opacity-40" : ""}`}
+              style={{ paddingLeft: 8 + depth * 12 }}
+              onClick={(e) => onSelect(block.id, e.metaKey || e.ctrlKey, e.shiftKey)}
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", block.id);
+                ctx.onDragStart(block.id);
+              }}
+              onDragOver={(e: DragEvent) => {
+                if (!ctx.dragging) return;
+                e.preventDefault();
+                const target = isMoving ? null : edgeTarget(e, block.id);
+                if (!sameTarget(ctx.drop, target)) ctx.onDragOver(target);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                ctx.onDrop();
+              }}
+              onDragEnd={() => ctx.onDragEnd()}
+            >
+              {line && <span className={`pointer-events-none absolute left-0 right-0 h-0.5 bg-accent ${line === "before" ? "top-0" : "bottom-0"}`} />}
+              {blockLabel(block)}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => void }) {
+function Inspector({
+  block,
+  onChange,
+  activeCell,
+  onCell
+}: {
+  block: Block;
+  onChange: (b: Block) => void;
+  activeCell: Cell | null;
+  onCell: (cell: Cell | null) => void;
+}) {
   return (
     <div className="space-y-3 text-sm">
       <div className="font-medium capitalize">{blockLabel(block)}</div>
@@ -430,11 +636,13 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
       )}
       {(block.type === "image" || block.type === "banner") && (
         <>
-          <ImageSource src={block.src} onChange={(src) => onChange({ ...block, src })} />
+          <ImageSource src={block.original || block.src} onChange={(src) => onChange({ ...block, src, original: undefined, height: undefined })} />
           <label className="block">
-            Width
-            <input type="number" className="input mt-1" value={block.width ?? 140} onChange={(e) => onChange({ ...block, width: Number(e.target.value) })} />
+            Width (px)
+            <input type="number" min={16} className="input mt-1" value={defaultWidth(block)} onChange={(e) => onChange({ ...block, width: Number(e.target.value) })} />
+            <span className="text-[11px] text-slate-400">Or drag the corner of the image on the letter.</span>
           </label>
+          <ImageFit block={block} />
           <label className="block">
             Alt text
             <input className="input mt-1" value={block.alt || ""} onChange={(e) => onChange({ ...block, alt: e.target.value })} />
@@ -519,8 +727,232 @@ function Inspector({ block, onChange }: { block: Block; onChange: (b: Block) => 
               />
             </label>
           ))}
+          <button type="button" className="btn btn-ghost w-full" onClick={() => onChange(rowToTable(block))}>
+            Convert to table
+          </button>
+          <p className="text-xs text-slate-500 leading-5">A table can add rows, merge cells across columns or rows, and set padding, alignment and borders per cell.</p>
         </div>
       )}
+      {block.type === "table" && <TableInspector table={block} cell={activeCell} onCell={onCell} onChange={onChange} />}
+    </div>
+  );
+}
+
+const SIDES: CellSide[] = ["top", "right", "bottom", "left"];
+
+function TableInspector({
+  table,
+  cell,
+  onCell,
+  onChange
+}: {
+  table: Table;
+  cell: Cell | null;
+  onCell: (cell: Cell | null) => void;
+  onChange: (b: Block) => void;
+}) {
+  const at = cell && table.rows[cell.r]?.[cell.c] && !table.rows[cell.r]![cell.c]!.merged ? cell : null;
+  const data = at ? table.rows[at.r]![at.c]! : null;
+
+  /** Apply a table operation and keep a sensible cell selected afterwards. */
+  function apply(next: Table | null, focus?: { r: number; c: number }) {
+    if (!next) return;
+    onChange(next);
+    if (focus) {
+      const r = Math.min(focus.r, next.rows.length - 1);
+      const c = Math.min(focus.c, next.columns.length - 1);
+      onCell({ table: table.id, ...anchorOf(next, r, c) });
+    }
+  }
+  const setCell = (next: TableCell) => at && onChange(updateCell(table, at.r, at.c, next));
+  const can = {
+    right: at ? mergeCells(table, at.r, at.c, "right") !== null : false,
+    down: at ? mergeCells(table, at.r, at.c, "down") !== null : false,
+    split: at ? splitCell(table, at.r, at.c) !== null : false
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="text-xs text-slate-500 mb-1">Column widths (px, empty for automatic)</div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {table.columns.map((w, i) => (
+            <input
+              key={i}
+              className="input px-2"
+              inputMode="numeric"
+              placeholder="auto"
+              value={w}
+              onChange={(e) => onChange({ ...table, columns: table.columns.map((x, j) => (j === i ? e.target.value.replace(/\D/g, "") : x)) })}
+            />
+          ))}
+        </div>
+      </div>
+
+      {!at && <p className="text-xs text-slate-500 leading-5">Click a cell on the letter to add rows or columns next to it, merge it with a neighbour, or style it.</p>}
+
+      {at && data && (
+        <>
+          <div className="text-xs text-slate-500">
+            Cell: row {at.r + 1}, column {at.c + 1}
+            {(data.colSpan ?? 1) > 1 && `, spans ${data.colSpan} columns`}
+            {(data.rowSpan ?? 1) > 1 && `, spans ${data.rowSpan} rows`}
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <button className="btn btn-ghost px-2 text-xs" onClick={() => apply(insertRow(table, at.r), { r: at.r + 1, c: at.c })}>
+              Row above
+            </button>
+            <button className="btn btn-ghost px-2 text-xs" onClick={() => apply(insertRow(table, at.r + (data.rowSpan ?? 1)), at)}>
+              Row below
+            </button>
+            <button className="btn btn-ghost px-2 text-xs text-rose-700" disabled={table.rows.length < 2} onClick={() => apply(deleteRow(table, at.r), at)}>
+              Delete row
+            </button>
+            <button className="btn btn-ghost px-2 text-xs" onClick={() => apply(insertColumn(table, at.c), { r: at.r, c: at.c + 1 })}>
+              Column left
+            </button>
+            <button className="btn btn-ghost px-2 text-xs" onClick={() => apply(insertColumn(table, at.c + (data.colSpan ?? 1)), at)}>
+              Column right
+            </button>
+            <button className="btn btn-ghost px-2 text-xs text-rose-700" disabled={table.columns.length < 2} onClick={() => apply(deleteColumn(table, at.c), at)}>
+              Delete col
+            </button>
+            <button className="btn btn-ghost px-2 text-xs" disabled={!can.right} title="Merge with the cell to the right (column span)" onClick={() => apply(mergeCells(table, at.r, at.c, "right"), at)}>
+              Merge →
+            </button>
+            <button className="btn btn-ghost px-2 text-xs" disabled={!can.down} title="Merge with the cell below (row span)" onClick={() => apply(mergeCells(table, at.r, at.c, "down"), at)}>
+              Merge ↓
+            </button>
+            <button className="btn btn-ghost px-2 text-xs" disabled={!can.split} onClick={() => apply(splitCell(table, at.r, at.c), at)}>
+              Split
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-xs">
+              Align
+              <select className="input mt-1" value={data.align ?? "left"} onChange={(e) => setCell({ ...data, align: e.target.value as TableCell["align"] })}>
+                <option value="left">Left</option>
+                <option value="center">Centre</option>
+                <option value="right">Right</option>
+              </select>
+            </label>
+            <label className="text-xs">
+              Vertical
+              <select className="input mt-1" value={data.valign ?? "top"} onChange={(e) => setCell({ ...data, valign: e.target.value as TableCell["valign"] })}>
+                <option value="top">Top</option>
+                <option value="middle">Middle</option>
+                <option value="bottom">Bottom</option>
+              </select>
+            </label>
+          </div>
+
+          <div>
+            <div className="text-xs mb-1">Padding (px): top, right, bottom, left</div>
+            <div className="grid grid-cols-4 gap-1.5">
+              {SIDES.map((side) => (
+                <input
+                  key={side}
+                  type="number"
+                  min={0}
+                  title={side}
+                  className="input px-2"
+                  value={data.padding?.[side] ?? 0}
+                  onChange={(e) => setCell({ ...data, padding: { ...data.padding, [side]: Math.max(0, Number(e.target.value) || 0) } })}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-xs mb-1">Border</div>
+            <div className="flex flex-wrap gap-3 text-xs">
+              {SIDES.map((side) => (
+                <label key={side} className="flex items-center gap-1 capitalize">
+                  <input
+                    type="checkbox"
+                    checked={data.border?.sides.includes(side) ?? false}
+                    onChange={(e) => {
+                      const sides = new Set(data.border?.sides ?? []);
+                      if (e.target.checked) sides.add(side);
+                      else sides.delete(side);
+                      setCell({ ...data, border: sides.size ? { ...data.border, sides: SIDES.filter((s) => sides.has(s)) } : undefined });
+                    }}
+                  />
+                  {side}
+                </label>
+              ))}
+            </div>
+            {data.border && (
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <input
+                  type="color"
+                  className="h-9 w-full rounded-md border border-line"
+                  value={data.border.color ?? "#d1d5db"}
+                  onChange={(e) => setCell({ ...data, border: { ...data.border!, color: e.target.value } })}
+                />
+                <input
+                  type="number"
+                  min={1}
+                  className="input"
+                  title="Thickness (px)"
+                  value={data.border.width ?? 1}
+                  onChange={(e) => setCell({ ...data, border: { ...data.border!, width: Math.max(1, Number(e.target.value) || 1) } })}
+                />
+              </div>
+            )}
+          </div>
+
+          <label className="block text-xs">
+            Background
+            <div className="flex gap-2 mt-1">
+              <input
+                type="color"
+                className="h-9 w-16 rounded-md border border-line"
+                value={data.background || "#ffffff"}
+                onChange={(e) => setCell({ ...data, background: e.target.value })}
+              />
+              {data.background && (
+                <button className="btn btn-ghost text-xs" onClick={() => setCell({ ...data, background: undefined })}>
+                  None
+                </button>
+              )}
+            </div>
+          </label>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The image's file size against where it is placed, and what saving will do with it. */
+function ImageFit({ block }: { block: Extract<Block, { type: "image" | "banner" }> }) {
+  const source = block.original || block.src;
+  const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
+  useEffect(() => {
+    setNatural(null);
+    if (!source || source.includes("{{")) return;
+    let live = true;
+    void loadImage(source)
+      .then((img) => live && setNatural({ width: img.naturalWidth, height: img.naturalHeight }))
+      .catch(() => live && setNatural(null));
+    return () => {
+      live = false;
+    };
+  }, [source]);
+  if (!natural) return null;
+  const plan: FitPlan = planFit(block, natural);
+  return (
+    <div className="rounded-md bg-mist px-3 py-2 text-xs text-slate-600 leading-5">
+      <div>
+        File {natural.width} × {natural.height} px · shown at {plan.shown.width} × {plan.shown.height}
+      </div>
+      {plan.saved && isUpload(source) && (
+        <div className="font-medium text-ink">
+          Saved as {plan.saved.width} × {plan.saved.height} px when you save
+        </div>
+      )}
+      <div className="text-slate-500">{plan.note}</div>
     </div>
   );
 }
@@ -572,8 +1004,8 @@ function ImageSource({ src, onChange }: { src: string; onChange: (src: string) =
         />
       </label>
       <p className="text-xs text-slate-500 leading-5">
-        Uploaded images (PNG, JPEG, GIF or WEBP, up to 8 MB; keep logos small) travel inside each email, so recipients see them
-        without &quot;download pictures&quot; prompts. Links are loaded from the web when the email is opened.
+        Uploaded images (PNG, JPEG, GIF or WEBP, up to 8 MB) travel inside each email, so recipients see them without &quot;download
+        pictures&quot; prompts. Upload the full-size file: saving resizes it to fit. Links are loaded from the web when the email is opened.
       </p>
     </div>
   );

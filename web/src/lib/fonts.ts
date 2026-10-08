@@ -1,4 +1,5 @@
 import type { Block, Design, TextStyle } from "../api/client";
+import { mapChildLists } from "./tree";
 
 /**
  * Aptos as Outlook writes it. Where Aptos is not installed, Outlook loads it
@@ -38,7 +39,7 @@ export function inPoints(design: Design): Design {
   };
   const blocks = (list: Block[]): Block[] =>
     list.map((b) => {
-      if (b.type === "row") return { ...b, columns: b.columns.map((c) => ({ ...c, blocks: blocks(c.blocks) })) };
+      if (b.type === "row" || b.type === "table") return mapChildLists(b, blocks);
       if (b.type === "text" || b.type === "field") return { ...b, style: style(b.style) };
       return b;
     });

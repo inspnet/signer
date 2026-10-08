@@ -1,5 +1,5 @@
 import type { DirectoryUser } from "../directory/fields.js";
-import { APTOS_STACK, inPoints, type Block, type Design, type TextStyle } from "./design.js";
+import { APTOS_STACK, inPoints, type Block, type CellSide, type Design, type TableCell, type TextStyle } from "./design.js";
 
 const DEFAULT_STYLE: Required<TextStyle> = {
   fontFamily: APTOS_STACK,
@@ -53,6 +53,72 @@ function styleAttr(style?: TextStyle): string {
   return parts.join(";");
 }
 
+/** A positive whole number of pixels, or null. */
+function px(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : null;
+}
+
+/**
+ * width and height attributes for Outlook on Windows, which sizes images by
+ * them and ignores CSS; height:auto lets other clients keep the proportions
+ * when they shrink an image to fit a phone screen.
+ */
+function imageSize(width: number, height?: number): string {
+  const h = px(height);
+  return `width="${width}"${h ? ` height="${h}"` : ""}`;
+}
+
+const SIDES: CellSide[] = ["top", "right", "bottom", "left"];
+
+/** One grid column's width in pixels, or null when it is automatic. */
+function columnWidth(columns: string[], index: number): number | null {
+  const raw = (columns[index] ?? "").trim();
+  return /^\d+$/.test(raw) ? px(Number(raw)) : null;
+}
+
+function renderTable(block: Extract<Block, { type: "table" }>, user: DirectoryUser, hideEmpty: boolean): string {
+  let anyContent = false;
+  const rows = block.rows.map((row, r) => {
+    const cells = row
+      .map((cell, c) => {
+        if (cell.merged) return "";
+        const inner = cell.blocks.map((b) => renderBlock(b, user, hideEmpty)).filter(Boolean).join("");
+        if (inner) anyContent = true;
+        return renderCell(block, cell, r, c, inner);
+      })
+      .join("");
+    return `<tr>${cells}</tr>`;
+  });
+  if (hideEmpty && !anyContent) return "";
+  const widths = block.columns.map((_, i) => columnWidth(block.columns, i));
+  const total = widths.every((w) => w !== null) ? widths.reduce<number>((sum, w) => sum + (w ?? 0), 0) : null;
+  const width = total ? ` width="${total}" style="width:${total}px;border-collapse:collapse;"` : ` style="border-collapse:collapse;"`;
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0"${width}>${rows.join("")}</table>`;
+}
+
+function renderCell(block: Extract<Block, { type: "table" }>, cell: TableCell, r: number, c: number, inner: string): string {
+  const colSpan = Math.max(1, Math.min(Math.round(cell.colSpan ?? 1), block.columns.length - c));
+  const rowSpan = Math.max(1, Math.min(Math.round(cell.rowSpan ?? 1), block.rows.length - r));
+  const spanned = Array.from({ length: colSpan }, (_, i) => columnWidth(block.columns, c + i));
+  const width = spanned.every((w) => w !== null) ? spanned.reduce<number>((sum, w) => sum + (w ?? 0), 0) : null;
+  const attrs = [
+    colSpan > 1 ? `colspan="${colSpan}"` : "",
+    rowSpan > 1 ? `rowspan="${rowSpan}"` : "",
+    width ? `width="${width}"` : "",
+    `valign="${cell.valign === "middle" || cell.valign === "bottom" ? cell.valign : "top"}"`,
+    cell.align === "center" || cell.align === "right" ? `align="${cell.align}"` : ""
+  ].filter(Boolean);
+  const style = [`padding:${SIDES.map((side) => `${px(cell.padding?.[side]) ?? 0}px`).join(" ")}`];
+  if (cell.align === "center" || cell.align === "right") style.push(`text-align:${cell.align}`);
+  const bg = cssValue(cell.background, "");
+  if (bg) style.push(`background:${bg}`);
+  if (cell.border?.sides?.length) {
+    const line = `${px(cell.border.width) ?? 1}px solid ${cssValue(cell.border.color, "#d1d5db")}`;
+    for (const side of SIDES) if (cell.border.sides.includes(side)) style.push(`border-${side}:${line}`);
+  }
+  return `<td ${attrs.join(" ")} style="${style.join(";")};">${inner}</td>`;
+}
+
 function wrapLink(html: string, href: string | null, underline = false): string {
   if (!href) return html;
   return `<a href="${escapeHtml(href)}" style="color:inherit;text-decoration:${underline ? "underline" : "none"};">${html}</a>`;
@@ -88,14 +154,14 @@ function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): str
     case "image": {
       const src = interpolate(block.src, user).trim();
       if (!src) return "";
-      const img = `<img src="${escapeHtml(src)}" width="${block.width ?? 120}" alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;outline:none;text-decoration:none;" />`;
+      const img = `<img src="${escapeHtml(src)}" ${imageSize(px(block.width) ?? 120, block.height)} alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;outline:none;text-decoration:none;height:auto;" />`;
       const href = block.href ? safeHref(block.href) : null;
       return href ? `<a href="${escapeHtml(href)}">${img}</a>` : img;
     }
     case "banner": {
       const src = interpolate(block.src, user).trim();
       if (!src) return "";
-      const img = `<img src="${escapeHtml(src)}" width="${block.width ?? 460}" alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;max-width:100%;" />`;
+      const img = `<img src="${escapeHtml(src)}" ${imageSize(px(block.width) ?? 460, block.height)} alt="${escapeHtml(block.alt ?? "")}" style="display:block;border:0;max-width:100%;height:auto;" />`;
       const href = block.href ? safeHref(block.href) : null;
       return href ? `<a href="${escapeHtml(href)}">${img}</a>` : img;
     }
@@ -138,6 +204,8 @@ function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): str
       if (!cols.length) return "";
       return `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${cols.join("")}</tr></table>`;
     }
+    case "table":
+      return renderTable(block, user, hideEmpty);
     default:
       return "";
   }

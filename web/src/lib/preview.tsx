@@ -1,7 +1,20 @@
-import type { CSSProperties } from "react";
-import type { Block, Design, TextStyle } from "../api/client";
+import { createContext, useContext, useRef, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import type { Block, CellSide, TableCell, TextStyle } from "../api/client";
 import { fieldLabel } from "./fields";
 import { APTOS_STACK } from "./fonts";
+import { cellKey, type DropTarget, type Slot } from "./tree";
+
+export {
+  cloneBlock,
+  duplicateBlocks,
+  findBlock,
+  flattenBlocks,
+  insertAfter,
+  moveBlock,
+  removeBlock,
+  removeBlocks,
+  replaceBlock
+} from "./tree";
 
 export type PreviewUser = Record<string, unknown>;
 
@@ -45,47 +58,163 @@ const SOCIAL_MARK: Record<string, string> = {
   website: "w"
 };
 
-export function LiveBlock({
-  block,
-  user,
-  selected,
-  onSelect
-}: {
-  block: Block;
+/** What the canvas needs from the designer: selection, the active table cell, dragging and image resizing. */
+export type CanvasState = {
   user: PreviewUser;
-  selected: string | null;
-  onSelect: (id: string) => void;
-}) {
-  const active = selected === block.id;
+  selected: ReadonlySet<string>;
+  /** additive: Shift, Ctrl or ⌘ was held, so add or remove instead of replacing the selection. */
+  onSelect: (id: string, additive: boolean) => void;
+  activeCell: { table: string; r: number; c: number } | null;
+  onSelectCell: (table: string, r: number, c: number) => void;
+  dragging: ReadonlySet<string> | null;
+  drop: DropTarget | null;
+  onDragStart: (id: string) => void;
+  onDragOver: (target: DropTarget | null) => void;
+  onDrop: () => void;
+  onDragEnd: () => void;
+  onResize: (id: string, width: number) => void;
+  maxWidth: number;
+};
+
+const Canvas = createContext<CanvasState | null>(null);
+/** True inside a block that is being dragged: it cannot be dropped into itself. */
+const InsideDragged = createContext(false);
+
+export function CanvasProvider({ value, children }: { value: CanvasState; children: ReactNode }) {
+  return <Canvas.Provider value={value}>{children}</Canvas.Provider>;
+}
+
+export function useCanvasState(): CanvasState {
+  return useCanvas();
+}
+
+function useCanvas(): CanvasState {
+  const ctx = useContext(Canvas);
+  if (!ctx) throw new Error("LiveBlock outside CanvasProvider");
+  return ctx;
+}
+
+export function sameTarget(a: DropTarget | null, b: DropTarget | null): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Before or after the element, by which half the pointer is over. */
+export function edgeTarget(e: DragEvent, id: string): DropTarget {
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  return e.clientY < rect.top + rect.height / 2 ? { before: id } : { after: id };
+}
+
+/** Handlers that make an element accept a drop into a list (a column, a cell, the signature itself). */
+export function useSlotDrop(slot: Slot) {
+  const ctx = useCanvas();
+  const inside = useContext(InsideDragged);
+  const target: DropTarget = { into: slot };
+  return {
+    active: ctx.dragging !== null && sameTarget(ctx.drop, target),
+    props: {
+      onDragOver: (e: DragEvent) => {
+        if (!ctx.dragging) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (inside) return ctx.onDragOver(null);
+        if (!sameTarget(ctx.drop, target)) ctx.onDragOver(target);
+      },
+      onDrop: (e: DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        ctx.onDrop();
+      }
+    }
+  };
+}
+
+export function LiveBlock({ block }: { block: Block }) {
+  const ctx = useCanvas();
+  const active = ctx.selected.has(block.id);
+  const inside = useContext(InsideDragged);
+  const moving = inside || (ctx.dragging?.has(block.id) ?? false);
+  const drop = ctx.drop;
+  const line = !drop ? null : "before" in drop && drop.before === block.id ? "before" : "after" in drop && drop.after === block.id ? "after" : null;
   return (
     <div
-      className={`relative rounded-sm ${active ? "ring-2 ring-accent ring-offset-2 bg-sky/40" : "hover:outline hover:outline-1 hover:outline-line"}`}
+      className={`relative rounded-sm cursor-grab ${moving && !inside ? "opacity-40" : ""} ${active ? "ring-2 ring-accent ring-offset-2 bg-sky/40" : "hover:outline hover:outline-1 hover:outline-line"}`}
+      draggable
+      onDragStart={(e) => {
+        e.stopPropagation();
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", block.id);
+        ctx.onDragStart(block.id);
+      }}
+      onDragOver={(e) => {
+        if (!ctx.dragging) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const target = moving ? null : edgeTarget(e, block.id);
+        if (!sameTarget(ctx.drop, target)) ctx.onDragOver(target);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        ctx.onDrop();
+      }}
+      onDragEnd={() => ctx.onDragEnd()}
       onClick={(e) => {
         e.stopPropagation();
-        onSelect(block.id);
+        ctx.onSelect(block.id, e.shiftKey || e.metaKey || e.ctrlKey);
       }}
     >
-      {active && (
+      {line && <span className={`pointer-events-none absolute left-0 right-0 h-0.5 bg-accent z-20 ${line === "before" ? "-top-1" : "-bottom-1"}`} />}
+      {active && ctx.selected.size === 1 && (
         <span className="absolute -top-2.5 left-0 text-[9px] uppercase tracking-[0.12em] bg-accent text-white px-1.5 py-0.5 rounded-sm z-10">
           {blockLabel(block)}
         </span>
       )}
-      <BlockBody block={block} user={user} selected={selected} onSelect={onSelect} />
+      <InsideDragged.Provider value={moving}>
+        <BlockBody block={block} />
+      </InsideDragged.Provider>
     </div>
   );
 }
 
-function BlockBody({
-  block,
-  user,
-  selected,
-  onSelect
-}: {
-  block: Block;
-  user: PreviewUser;
-  selected: string | null;
-  onSelect: (id: string) => void;
-}) {
+/** An image with a corner handle to resize it, shown when it is the only thing selected. */
+function SizedImage({ id, src, width, alt }: { id: string; src: string; width: number; alt: string }) {
+  const ctx = useCanvas();
+  const start = useRef<{ x: number; width: number } | null>(null);
+  const handle = ctx.selected.size === 1 && ctx.selected.has(id);
+  return (
+    <span className="relative inline-block align-top">
+      <img src={src} width={width} alt={alt} draggable={false} style={{ display: "block", height: "auto" }} />
+      {handle && (
+        <span
+          title="Drag to resize"
+          className="absolute -right-1.5 -bottom-1.5 h-3 w-3 rounded-sm bg-white border-2 border-accent cursor-nwse-resize z-20"
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => {
+            // Stops the browser starting a drag-and-drop of the block instead.
+            e.preventDefault();
+            e.stopPropagation();
+            start.current = { x: e.clientX, width };
+            const move = (ev: MouseEvent) => {
+              if (!start.current) return;
+              const next = Math.round(start.current.width + ev.clientX - start.current.x);
+              ctx.onResize(id, Math.max(16, Math.min(ctx.maxWidth, next)));
+            };
+            const up = () => {
+              start.current = null;
+              window.removeEventListener("mousemove", move);
+              window.removeEventListener("mouseup", up);
+            };
+            window.addEventListener("mousemove", move);
+            window.addEventListener("mouseup", up);
+          }}
+        />
+      )}
+    </span>
+  );
+}
+
+function BlockBody({ block }: { block: Block }) {
+  const { user } = useCanvas();
   switch (block.type) {
     case "text": {
       const text = interpolate(block.content, user) || "Text";
@@ -113,7 +242,7 @@ function BlockBody({
     }
     case "image": {
       const src = interpolate(block.src, user);
-      if (src) return <img src={src} width={block.width ?? 140} alt={block.alt || ""} />;
+      if (src) return <SizedImage id={block.id} src={src} width={block.width ?? 140} alt={block.alt || ""} />;
       if ((block.alt || "").toLowerCase().includes("photo")) {
         return (
           <div
@@ -126,17 +255,17 @@ function BlockBody({
       }
       return (
         <div className="border border-dashed border-line text-slate-400 text-xs px-4 py-5 text-center rounded-md bg-mist/40">
-          Paste a logo URL in the inspector
+          Upload a logo in the inspector
         </div>
       );
     }
     case "banner": {
       const src = interpolate(block.src, user);
       return src ? (
-        <img src={src} width={block.width ?? 460} alt={block.alt || ""} />
+        <SizedImage id={block.id} src={src} width={block.width ?? 460} alt={block.alt || ""} />
       ) : (
         <div className="border border-dashed border-line text-slate-400 text-xs px-4 py-8 text-center rounded-md bg-mist/40">
-          Banner image URL
+          Upload a banner in the inspector
         </div>
       );
     }
@@ -147,9 +276,9 @@ function BlockBody({
     case "social":
       return (
         <div className="flex gap-1.5 py-0.5">
-          {block.networks.map((n) => (
+          {block.networks.map((n, i) => (
             <span
-              key={n.name}
+              key={`${n.name}-${i}`}
               className="h-6 w-6 rounded-md bg-ink text-white text-[10px] grid place-items-center font-semibold"
               title={n.name}
             >
@@ -163,17 +292,95 @@ function BlockBody({
       return (
         <div className="flex gap-4 items-start">
           {block.columns.map((col, i) => (
-            <div key={i} className="min-w-0 space-y-1" style={{ flex: col.width && /^\d+$/.test(col.width) ? Number(col.width) : 1 }}>
-              {col.blocks.map((child) => (
-                <LiveBlock key={child.id} block={child} user={user} selected={selected} onSelect={onSelect} />
-              ))}
-            </div>
+            <RowColumn key={i} row={block.id} index={i} blocks={col.blocks} flex={col.width && /^\d+$/.test(col.width) ? Number(col.width) : 1} />
           ))}
         </div>
       );
+    case "table":
+      return <LiveTable table={block} />;
     default:
       return null;
   }
+}
+
+function RowColumn({ row, index, blocks, flex }: { row: string; index: number; blocks: Block[]; flex: number }) {
+  const slot = useSlotDrop({ container: row, key: `c${index}` });
+  return (
+    <div {...slot.props} className={`min-w-0 space-y-1 min-h-6 rounded-sm ${slot.active ? "bg-sky outline outline-1 outline-accent" : ""}`} style={{ flex }}>
+      {blocks.map((child) => (
+        <LiveBlock key={child.id} block={child} />
+      ))}
+      {blocks.length === 0 && <EmptyList />}
+    </div>
+  );
+}
+
+function EmptyList() {
+  return <div className="text-[11px] text-slate-300 italic px-1 py-1">Empty</div>;
+}
+
+const SIDES: CellSide[] = ["top", "right", "bottom", "left"];
+
+function cellStyle(cell: TableCell, width: number | undefined): CSSProperties {
+  const style: CSSProperties = {
+    padding: SIDES.map((s) => `${cell.padding?.[s] ?? 0}px`).join(" "),
+    verticalAlign: cell.valign ?? "top",
+    textAlign: cell.align ?? "left",
+    background: cell.background || undefined,
+    width
+  };
+  if (cell.border?.sides.length) {
+    const line = `${cell.border.width ?? 1}px solid ${cell.border.color || "#d1d5db"}`;
+    for (const s of cell.border.sides) style[`border${s[0]!.toUpperCase()}${s.slice(1)}` as "borderTop"] = line;
+  }
+  return style;
+}
+
+function LiveTable({ table }: { table: Extract<Block, { type: "table" }> }) {
+  const widths = table.columns.map((w) => (/^\d+$/.test(w.trim()) ? Number(w) : undefined));
+  return (
+    <table style={{ borderCollapse: "collapse" }}>
+      <tbody>
+        {table.rows.map((row, r) => (
+          <tr key={r}>
+            {row.map((cell, c) => {
+              if (cell.merged) return null;
+              const span = widths.slice(c, c + (cell.colSpan ?? 1));
+              const width = span.every((w) => w !== undefined) ? span.reduce<number>((a, w) => a + (w ?? 0), 0) : undefined;
+              return <LiveCell key={c} table={table.id} r={r} c={c} cell={cell} width={width} />;
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function LiveCell({ table, r, c, cell, width }: { table: string; r: number; c: number; cell: TableCell; width: number | undefined }) {
+  const ctx = useCanvas();
+  const slot = useSlotDrop({ container: table, key: cellKey(r, c) });
+  const active = ctx.activeCell?.table === table && ctx.activeCell.r === r && ctx.activeCell.c === c;
+  return (
+    <td
+      {...slot.props}
+      colSpan={cell.colSpan ?? 1}
+      rowSpan={cell.rowSpan ?? 1}
+      style={cellStyle(cell, width)}
+      className={`${active ? "outline outline-2 outline-accent -outline-offset-2" : "outline outline-1 outline-dashed outline-line -outline-offset-1"} ${slot.active ? "bg-sky" : ""}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        ctx.onSelectCell(table, r, c);
+      }}
+    >
+      {/* Room to click and drop into on the letter; the email itself has no minimum. */}
+      <div className={`space-y-1 min-h-6 ${cell.blocks.length ? "" : "min-w-20"}`}>
+        {cell.blocks.map((child) => (
+          <LiveBlock key={child.id} block={child} />
+        ))}
+        {cell.blocks.length === 0 && <EmptyList />}
+      </div>
+    </td>
+  );
 }
 
 export function blockLabel(block: Block): string {
@@ -183,101 +390,8 @@ export function blockLabel(block: Block): string {
   if (block.type === "spacer") return "Space";
   if (block.type === "divider") return "Rule";
   if (block.type === "row") return "Columns";
+  if (block.type === "table") return `Table ${block.rows.length}×${block.columns.length}`;
   if (block.type === "banner") return "Banner";
   if (block.type === "social") return "Social";
   return "Block";
-}
-
-export function flattenBlocks(blocks: Block[], depth = 0): Array<{ block: Block; depth: number }> {
-  const out: Array<{ block: Block; depth: number }> = [];
-  for (const b of blocks) {
-    out.push({ block: b, depth });
-    if (b.type === "row") {
-      for (const c of b.columns) out.push(...flattenBlocks(c.blocks, depth + 1));
-    }
-  }
-  return out;
-}
-
-export function findBlock(blocks: Block[], id: string): Block | null {
-  for (const b of blocks) {
-    if (b.id === id) return b;
-    if (b.type === "row") {
-      for (const c of b.columns) {
-        const found = findBlock(c.blocks, id);
-        if (found) return found;
-      }
-    }
-  }
-  return null;
-}
-
-export function replaceBlock(blocks: Block[], next: Block): Block[] {
-  return blocks.map((b) => {
-    if (b.id === next.id) return next;
-    if (b.type === "row") {
-      return { ...b, columns: b.columns.map((c) => ({ ...c, blocks: replaceBlock(c.blocks, next) })) };
-    }
-    return b;
-  });
-}
-
-export function removeBlock(blocks: Block[], id: string): Block[] {
-  return blocks
-    .filter((b) => b.id !== id)
-    .map((b) => (b.type === "row" ? { ...b, columns: b.columns.map((c) => ({ ...c, blocks: removeBlock(c.blocks, id) })) } : b));
-}
-
-export function insertAfter(blocks: Block[], afterId: string | null, item: Block): Block[] {
-  if (!afterId) return [...blocks, item];
-  const idx = blocks.findIndex((b) => b.id === afterId);
-  if (idx !== -1) {
-    const next = [...blocks];
-    next.splice(idx + 1, 0, item);
-    return next;
-  }
-  return blocks.map((b) => {
-    if (b.type !== "row") return b;
-    return { ...b, columns: b.columns.map((c) => ({ ...c, blocks: insertAfter(c.blocks, afterId, item) })) };
-  });
-}
-
-export function moveBlock(blocks: Block[], id: string, dir: -1 | 1): Block[] {
-  const idx = blocks.findIndex((b) => b.id === id);
-  if (idx !== -1) {
-    const swap = idx + dir;
-    if (swap < 0 || swap >= blocks.length) return blocks;
-    const next = [...blocks];
-    [next[idx], next[swap]] = [next[swap], next[idx]];
-    return next;
-  }
-  return blocks.map((b) => {
-    if (b.type !== "row") return b;
-    return { ...b, columns: b.columns.map((c) => ({ ...c, blocks: moveBlock(c.blocks, id, dir) })) };
-  });
-}
-
-export function cloneBlock(block: Block): Block {
-  const id = `b_${Math.random().toString(36).slice(2, 10)}`;
-  if (block.type === "row") {
-    return { ...block, id, columns: block.columns.map((c) => ({ ...c, blocks: c.blocks.map(cloneBlock) })) };
-  }
-  return { ...block, id };
-}
-
-export function duplicateBlock(blocks: Block[], id: string): Block[] {
-  const idx = blocks.findIndex((b) => b.id === id);
-  if (idx !== -1) {
-    const next = [...blocks];
-    next.splice(idx + 1, 0, cloneBlock(blocks[idx]!));
-    return next;
-  }
-  return blocks.map((b) => {
-    if (b.type !== "row") return b;
-    return { ...b, columns: b.columns.map((c) => ({ ...c, blocks: duplicateBlock(c.blocks, id) })) };
-  });
-}
-
-export function mutateDesign(design: Design, fn: (blocks: Block[]) => Block[]): Design {
-  return { ...design, blocks: fn(design.blocks) };
 }
