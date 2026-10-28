@@ -15,6 +15,7 @@ import {
   type SignatureRecord
 } from "../db/index.js";
 import { emptyUser, type DirectoryUser } from "../directory/fields.js";
+import { senderProfile } from "../directory/links.js";
 import type { Design } from "./design.js";
 import { insertHtml, insertText, isReplyMessage, latestBodyText } from "./insert.js";
 import { decodeText, findBody, headerBlock, parsePart, spliceBody, type InlineImage, type MimePart } from "./mime.js";
@@ -91,7 +92,8 @@ function senderOutOfScope(senderEmail: string): string | null {
 }
 
 function senderUser(email: string): DirectoryUser {
-  return getUserByEmail(email) ?? emptyUser(email);
+  // A linked secondary mailbox signs with its person's details and its own address.
+  return senderProfile(email) ?? emptyUser(email);
 }
 
 function defaultRuleSet(): RuleSet {

@@ -11,9 +11,28 @@ export type DirectoryPerson = {
   website: string;
   pronouns: string;
   domain: string;
+  enabled?: number;
+  /** On a secondary mailbox: the id of the person whose details it signs with. */
+  primaryUserId?: string;
   groupIds: string[];
   [key: string]: string | string[] | number | undefined;
 };
+
+export type LinkSuggestion = { email: string; displayName: string; primaryEmail: string; primaryName: string };
+
+/** A secondary mailbox as it signs: its person's details with its own address (mirrors asLinked on the server). */
+export function linkedView(person: DirectoryPerson, everyone: DirectoryPerson[]): DirectoryPerson {
+  const primary = person.primaryUserId ? everyone.find((u) => u.id === person.primaryUserId) : undefined;
+  if (!primary) return person;
+  return {
+    ...primary,
+    id: person.id,
+    email: person.email,
+    domain: person.domain,
+    primaryUserId: primary.id,
+    groupIds: [...new Set([...primary.groupIds, ...person.groupIds])]
+  };
+}
 
 export type SessionUser = {
   email: string;
@@ -271,6 +290,9 @@ export const api = {
   tester: (body: { from: string; to: string; subject?: string; body?: string }) => request("/api/tester", { method: "POST", body: JSON.stringify(body) }),
   sendTest: (body: { from: string; to: string; subject?: string; body?: string }) =>
     request<{ ok: boolean; sentTo: string; signature: string | null }>("/api/tester/send", { method: "POST", body: JSON.stringify(body) }),
+  mailboxLinks: () => request<{ suggestions: LinkSuggestion[] }>("/api/directory/links"),
+  linkMailboxes: (links: Array<{ email: string; primaryEmail: string }>) =>
+    request<{ saved: DirectoryPerson[] }>("/api/directory/links", { method: "POST", body: JSON.stringify({ links }) }),
   saveUserDetails: (email: string, body: Record<string, string>) =>
     request<DirectoryPerson>(`/api/directory/users/${encodeURIComponent(email)}`, { method: "PUT", body: JSON.stringify(body) }),
   users: () => request<DirectoryPerson[]>("/api/users"),

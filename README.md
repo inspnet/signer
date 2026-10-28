@@ -568,6 +568,17 @@ How it is managed:
 
 `PRIMARY_DOMAIN` only seeds the list the first time Signer starts. After that, the portal is the source of truth.
 
+### Secondary mailboxes
+
+One person often sends from several mailboxes: their own, plus a shared mailbox for each company in the group (`Dara Di Rocco - Balfour Pacific`, `ddirocco@balfourpacific.com`). Those mailboxes are directory accounts of their own, usually unlicensed and with few details filled in.
+
+**Settings → Directory** links such a mailbox to its person. Mail from a linked mailbox is signed with the person's details (name, title, phones, address, photo, anything they set under My Details) and the mailbox's own address. Rules still see the address the mail came from, so the signature and disclaimers for `balfourpacific.com` apply. Group rules see the groups of both the person and the mailbox.
+
+- Signer suggests links where a mailbox's display name is a person's full name followed by a separator (`-`, `–`, `|`, `:`, `(` or "at") and the company. **Link all** accepts them; each can also be linked or unlinked by hand from the person's panel.
+- A link is to a person, not a chain: a linked mailbox cannot have mailboxes linked to it.
+- Links survive directory syncs, including an account deleted and re-created with the same address. If the person is removed from the directory, the mailbox goes back to its own details.
+- **Preview as** in the designer and the rule tester show a linked mailbox as it signs.
+
 ### Where signed mail goes back
 
 Each domain in a Microsoft 365 tenant has its own Exchange Online endpoint, published as its MX record (`contoso-com.mail.protection.outlook.com`, `fabrikam-com.mail.protection.outlook.com`, …). Signer hands each signed message back to the endpoint for the **sender's** domain:

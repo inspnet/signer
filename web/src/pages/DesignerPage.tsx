@@ -13,7 +13,7 @@ import {
   Undo2,
   UserRound
 } from "lucide-react";
-import { api, type Block, type CellSide, type DirectoryPerson, type Signature, type TableCell } from "../api/client";
+import { api, linkedView, type Block, type CellSide, type DirectoryPerson, type Signature, type TableCell } from "../api/client";
 import { DIRECTORY_FIELDS } from "../lib/fields";
 import { APTOS_STACK, FONTS, inPoints } from "../lib/fonts";
 import { defaultWidth, fitImages, isUpload, loadImage, planFit, type FitPlan } from "../lib/images";
@@ -131,7 +131,11 @@ export function DesignerPage() {
   }, [id]);
 
   const user = useMemo<PreviewUser>(
-    () => users.find((u) => u.email === previewEmail) || users[0] || { email: "", displayName: "" },
+    () => {
+      const chosen = users.find((u) => u.email === previewEmail) || users[0];
+      // A secondary mailbox previews as it signs: its person's details, its own address.
+      return chosen ? linkedView(chosen, users) : { email: "", displayName: "" };
+    },
     [users, previewEmail]
   );
   const dirty = sig ? JSON.stringify({ name: sig.name, design: sig.design }) !== saved : false;

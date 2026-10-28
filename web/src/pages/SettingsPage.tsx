@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
-import { api, type AlertConfig, type SentItemsConfig, type DirectoryPerson, type RelayDiagnosis, type UpdateCheck, type UpdateStatus } from "../api/client";
+import { api, type AlertConfig, type SentItemsConfig, type DirectoryPerson, type LinkSuggestion, type RelayDiagnosis, type UpdateCheck, type UpdateStatus } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
 import { useAuth } from "../layouts/Auth";
 
@@ -226,10 +226,29 @@ function Directory() {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<DirectoryPerson | null>(null);
   const [status, setStatus] = useState("");
+  const [suggestions, setSuggestions] = useState<LinkSuggestion[]>([]);
+  const loadSuggestions = () => api.mailboxLinks().then((r) => setSuggestions(r.suggestions)).catch(() => setSuggestions([]));
   useEffect(() => {
     void api.users().then(setUsers);
     void api.fields().then(setFields);
+    void loadSuggestions();
   }, []);
+
+  const byId = new Map(users.map((u) => [u.id, u]));
+  const linkedCount = (id: string) => users.filter((u) => u.primaryUserId === id).length;
+  /** Save links, then refresh the list, the open person and the suggestions. */
+  async function link(links: Array<{ email: string; primaryEmail: string }>) {
+    setStatus("");
+    try {
+      await api.linkMailboxes(links);
+      const fresh = await api.users();
+      setUsers(fresh);
+      setSelected((s) => (s ? (fresh.find((u) => u.id === s.id) ?? null) : s));
+      await loadSuggestions();
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   const [showDisabled, setShowDisabled] = useState(false);
   const q = query.trim().toLowerCase();
@@ -261,6 +280,7 @@ function Directory() {
                   : "No directory is configured."
               );
               setUsers(await api.users());
+              await loadSuggestions();
             } catch (err) {
               setStatus(err instanceof Error ? err.message : String(err));
             }
@@ -285,6 +305,38 @@ function Directory() {
         </span>
       </div>
       {status && <p className="text-sm text-slate-600">{status}</p>}
+      {suggestions.length > 0 && (
+        <div className="panel p-5 text-sm">
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="flex-1 min-w-[16rem]">
+              <h3 className="font-medium text-ink">
+                {suggestions.length} mailbox{suggestions.length === 1 ? " looks" : "es look"} like a person&apos;s secondary mailbox
+              </h3>
+              <p className="text-slate-500 mt-1 leading-6">
+                Linked, mail from the mailbox is signed with the person&apos;s name, title, phones and other details, and the mailbox&apos;s own
+                address. The signature for the mailbox&apos;s domain still applies.
+              </p>
+            </div>
+            <button className="btn btn-primary" onClick={() => void link(suggestions.map(({ email, primaryEmail }) => ({ email, primaryEmail })))}>
+              Link all {suggestions.length}
+            </button>
+          </div>
+          <ul className="mt-3 divide-y divide-line">
+            {suggestions.map((sug) => (
+              <li key={sug.email} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium text-ink">{sug.displayName}</span> <span className="text-slate-500">{sug.email}</span>
+                  <span className="text-slate-400"> → </span>
+                  <span className="text-ink">{sug.primaryName}</span> <span className="text-slate-500">{sug.primaryEmail}</span>
+                </span>
+                <button className="btn btn-ghost" onClick={() => void link([{ email: sug.email, primaryEmail: sug.primaryEmail }])}>
+                  Link
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px] items-start">
         <div className="panel overflow-auto max-h-[calc(100vh-16rem)]">
           <table className="w-full text-sm">
@@ -309,6 +361,16 @@ function Directory() {
                   <td className="px-4 py-2.5 font-medium text-ink">
                     {u.displayName}
                     {u.enabled === 0 && <span className="badge ml-2">Disabled</span>}
+                    {u.primaryUserId && (
+                      <div className="text-xs font-normal text-slate-500 mt-0.5">
+                        ↳ signs as {byId.get(u.primaryUserId)?.displayName ?? "a person no longer in the directory"}
+                      </div>
+                    )}
+                    {linkedCount(u.id) > 0 && (
+                      <span className="badge ml-2">
+                        +{linkedCount(u.id)} mailbox{linkedCount(u.id) === 1 ? "" : "es"}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">{u.email}</td>
                   <td className="px-4 py-2.5 text-slate-600">{u.jobTitle}</td>
@@ -330,6 +392,8 @@ function Directory() {
           <PersonEditor
             key={selected.id}
             person={selected}
+            people={users}
+            onLink={(primaryEmail) => link([{ email: selected.email, primaryEmail }])}
             fields={fields}
             onSaved={(saved) => {
               setUsers(users.map((u) => (u.id === saved.id ? saved : u)));
@@ -344,10 +408,14 @@ function Directory() {
 
 function PersonEditor(props: {
   person: DirectoryPerson;
+  people: DirectoryPerson[];
+  onLink: (primaryEmail: string) => Promise<void>;
   fields: Awaited<ReturnType<typeof api.fields>>;
   onSaved: (person: DirectoryPerson) => void;
 }) {
   const { person, fields } = props;
+  const primary = person.primaryUserId ? props.people.find((u) => u.id === person.primaryUserId) : undefined;
+  const linkedHere = props.people.filter((u) => u.primaryUserId === person.id);
   const editable = fields.filter((f) => !f.directory);
   const fromDirectory = fields.filter((f) => f.directory);
   const [draft, setDraft] = useState<Record<string, string>>(() =>
@@ -360,6 +428,7 @@ function PersonEditor(props: {
         <h2 className="font-bold text-lg text-ink">{person.displayName}</h2>
         <p className="text-slate-500">{person.email}</p>
       </div>
+      <MailboxLink person={person} people={props.people} primary={primary} linkedHere={linkedHere} onLink={props.onLink} />
       <div>
         <h3 className="font-medium">
           From {person.source === "google" ? "Google Workspace" : person.source === "entra" ? "Entra ID" : "the directory"}
@@ -405,6 +474,90 @@ function PersonEditor(props: {
         <button className="btn btn-primary">Save</button>
         {message && <p className="text-slate-600">{message}</p>}
       </form>
+    </div>
+  );
+}
+
+/**
+ * Which details mail from this address is signed with: its own, or a
+ * person's (for a secondary or shared mailbox that one person sends from).
+ */
+function MailboxLink(props: {
+  person: DirectoryPerson;
+  people: DirectoryPerson[];
+  primary: DirectoryPerson | undefined;
+  linkedHere: DirectoryPerson[];
+  onLink: (primaryEmail: string) => Promise<void>;
+}) {
+  const { person, primary, linkedHere } = props;
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const candidates = q
+    ? props.people
+        .filter((u) => u.id !== person.id && !u.primaryUserId)
+        .filter((u) => [u.displayName, u.email].some((v) => String(v ?? "").toLowerCase().includes(q)))
+        .slice(0, 8)
+    : [];
+
+  if (linkedHere.length) {
+    return (
+      <div className="rounded-lg bg-mist px-4 py-3">
+        <h3 className="font-medium">Secondary mailboxes</h3>
+        <p className="text-xs text-slate-500 mt-1 mb-2">Mail from these is signed with this person&apos;s details and the mailbox&apos;s own address.</p>
+        <ul className="space-y-1">
+          {linkedHere.map((u) => (
+            <li key={u.id} className="flex items-center justify-between gap-2">
+              <span className="min-w-0 truncate">{u.email}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg bg-mist px-4 py-3 space-y-2">
+      <h3 className="font-medium">Signs with</h3>
+      {primary ? (
+        <>
+          <p className="text-ink">
+            {primary.displayName} <span className="text-slate-500">{primary.email}</span>
+          </p>
+          <p className="text-xs text-slate-500 leading-5">
+            Mail from {person.email} uses {primary.displayName}&apos;s name, title, phones and other details, with {person.email} as the address. The
+            signature for {person.domain || "its domain"} still applies. Its own details below are not used while it is linked.
+          </p>
+          <button className="btn btn-ghost" onClick={() => void props.onLink("")}>
+            Use its own details instead
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-slate-500 leading-5">
+            Its own details. If one person sends from this mailbox (a shared mailbox for another company, say), link it to them so it is signed
+            with their details and this address.
+          </p>
+          <input className="input" placeholder="Find the person: name or email" value={query} onChange={(e) => setQuery(e.target.value)} />
+          {candidates.length > 0 && (
+            <ul className="rounded-md border border-line bg-white divide-y divide-line">
+              {candidates.map((u) => (
+                <li key={u.id}>
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-2 hover:bg-sky"
+                    onClick={() => {
+                      setQuery("");
+                      void props.onLink(u.email);
+                    }}
+                  >
+                    <span className="font-medium text-ink">{u.displayName}</span> <span className="text-slate-500">{u.email}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
     </div>
   );
 }
