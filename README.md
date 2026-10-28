@@ -461,7 +461,7 @@ docker compose logs -f --tail=80
 
 - **Signatures** — create, folders, evaluation order, block designer (drag to move, multi-select, tables with merged cells, resize images on the letter), HTML fields from the directory
 - **Rules** — senders, exceptions, groups/domains, internal vs external recipients, date/time with a per-rule timezone, reply/thread advanced rules
-- **Disclaimers** — separate legal notices with the same rules as signatures: sender domain (for example, a different legal entity per domain), group or address, exceptions, recipients (external only), schedule and subject or reply conditions. Unlike signatures, where the first match wins, every disclaimer whose rules match is added
+- **Disclaimers** — separate legal notices with the same rules as signatures: sender domain (for example, a different legal entity per domain), group or address, exceptions, recipients (external only), schedule and subject or reply conditions. Unlike signatures, where the first match wins, every disclaimer whose rules match is added. Each has its own text and spacing settings (base font, size, colour, line height, the gap between paragraphs and the space above it); paragraphs get explicit margins, so mail clients add no blank lines of their own
 - **Campaigns** — banner images with the same rule engine
 - **Rule Tester** — dry-run with per-rule pass/fail, plus **Send test**, which emails the result to your own mailbox
 - **User details** — employees edit only admin-unlocked fields
@@ -567,6 +567,17 @@ How it is managed:
 - Entra **guest** accounts are skipped during directory sync. They carry a partner's address, and used to make that partner's domain look internal.
 
 `PRIMARY_DOMAIN` only seeds the list the first time Signer starts. After that, the portal is the source of truth.
+
+### Secondary mailboxes
+
+One person often sends from several mailboxes: their own, plus a shared mailbox for each company in the group (`Dara Di Rocco - Balfour Pacific`, `ddirocco@balfourpacific.com`). Those mailboxes are directory accounts of their own, usually unlicensed and with few details filled in.
+
+**Settings → Directory** links such a mailbox to its person. Mail from a linked mailbox is signed with the person's details (name, title, phones, address, photo, anything they set under My Details) and the mailbox's own address. Rules still see the address the mail came from, so the signature and disclaimers for `balfourpacific.com` apply. Group rules see the groups of both the person and the mailbox.
+
+- Signer suggests links where a mailbox's display name is a person's full name followed by a separator (`-`, `–`, `|`, `:`, `(` or "at") and the company. **Link all** accepts them; each can also be linked or unlinked by hand from the person's panel.
+- A link is to a person, not a chain: a linked mailbox cannot have mailboxes linked to it.
+- Links survive directory syncs, including an account deleted and re-created with the same address. If the person is removed from the directory, the mailbox goes back to its own details.
+- **Preview as** in the designer and the rule tester show a linked mailbox as it signs.
 
 ### Where signed mail goes back
 

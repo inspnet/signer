@@ -23,6 +23,8 @@ export type Block =
       field: string;
       prefix?: string;
       suffix?: string;
+      /** The prefix's own colour and weight ("O:" in the brand colour, the number in grey). Unset follows the text. */
+      prefixStyle?: { color?: string; bold?: boolean };
       style?: TextStyle;
       link?: "email" | "phone" | "url" | "none";
     }

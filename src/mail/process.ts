@@ -15,12 +15,13 @@ import {
   type SignatureRecord
 } from "../db/index.js";
 import { emptyUser, type DirectoryUser } from "../directory/fields.js";
+import { senderProfile } from "../directory/links.js";
 import type { Design } from "./design.js";
 import { insertHtml, insertText, isReplyMessage, latestBodyText } from "./insert.js";
 import { decodeText, findBody, headerBlock, parsePart, spliceBody, type InlineImage, type MimePart } from "./mime.js";
 import { sealProcessed } from "./stamp.js";
 import { embedImages } from "./embed.js";
-import { APTOS_STACK } from "./design.js";
+import { disclaimerSpacer, renderDisclaimer, type DisclaimerStyle } from "./disclaimer.js";
 import type { SignedCopy } from "./sentitems.js";
 import { interpolate, renderDesign, renderPlainText } from "./render.js";
 import { evaluateRules, type RuleContext } from "./rules.js";
@@ -47,7 +48,7 @@ export type TestInput = {
 
 export type TestResult = {
   signature: { id: string; name: string; html: string } | null;
-  disclaimers: Array<{ id: string; name: string; html: string }>;
+  disclaimers: Array<{ id: string; name: string; html: string; style?: DisclaimerStyle }>;
   campaigns: Array<{ id: string; name: string }>;
   details: Array<{
     kind: "domain" | "signature" | "disclaimer" | "campaign";
@@ -91,7 +92,8 @@ function senderOutOfScope(senderEmail: string): string | null {
 }
 
 function senderUser(email: string): DirectoryUser {
-  return getUserByEmail(email) ?? emptyUser(email);
+  // A linked secondary mailbox signs with its person's details and its own address.
+  return senderProfile(email) ?? emptyUser(email);
 }
 
 function defaultRuleSet(): RuleSet {
@@ -220,18 +222,18 @@ function campaignHtml(camp: CampaignRecord): string {
   return href ? `<a href="${escapeHtmlAttr(href)}">${img}</a>` : img;
 }
 
-/** A blank line between the signature (and any campaign banner) and the disclaimers. */
-const DISCLAIMER_GAP = "<br>";
-
-/** Signature, then campaigns, then disclaimers, always with a line break before the disclaimers. */
-function joinSnippet(signature: string | undefined, campaigns: string[], disclaimers: string[]): string {
-  const above = [signature, ...campaigns].filter(Boolean).join("");
-  // Disclaimers are in Aptos unless their own text says otherwise.
-  const below = disclaimers
-    .filter(Boolean)
-    .map((html) => `<div style="font-family:${APTOS_STACK};">${html}</div>`)
-    .join("");
-  return above && below ? `${above}${DISCLAIMER_GAP}${below}` : above + below;
+/**
+ * Signature, then campaigns, then disclaimers. Each disclaimer has its own
+ * space above it (below the signature, or between disclaimers), so the gap is
+ * a set height rather than a line at whatever size the email body is.
+ */
+function joinSnippet(signature: string | undefined, campaigns: string[], disclaimers: Array<{ html: string; style?: DisclaimerStyle }>): string {
+  let out = [signature, ...campaigns].filter(Boolean).join("");
+  for (const d of disclaimers) {
+    if (!d.html.trim()) continue;
+    out += (out ? disclaimerSpacer(d.style) : "") + renderDisclaimer(d.html, d.style);
+  }
+  return out;
 }
 
 function assembleSnippet(tested: TestResult, campaigns: CampaignRecord[]): string {
@@ -242,7 +244,7 @@ function assembleSnippet(tested: TestResult, campaigns: CampaignRecord[]): strin
       const record = byId.get(c.id);
       return record ? campaignHtml(record) : "";
     }),
-    tested.disclaimers.map((d) => d.html)
+    tested.disclaimers
   );
 }
 
@@ -275,11 +277,11 @@ export function evaluateMessage(ctx: RuleContext, bodyPreview: string): TestResu
   const snippet = joinSnippet(
     signature?.html,
     campEval.chosen.map((c) => campaignHtml(c)),
-    discEval.chosen.map((d) => d.html)
+    discEval.chosen
   );
   return {
     signature,
-    disclaimers: discEval.chosen.map((d) => ({ id: d.id, name: d.name, html: d.html })),
+    disclaimers: discEval.chosen.map((d) => ({ id: d.id, name: d.name, html: d.html, style: d.style })),
     campaigns: campEval.chosen.map((c) => ({ id: c.id, name: c.name })),
     details: [...sigEval.details, ...campEval.details, ...discEval.details],
     htmlPreview: insertHtml(`<p>${escapeHtml(bodyPreview).replace(/\n/g, "<br/>")}</p>`, snippet)

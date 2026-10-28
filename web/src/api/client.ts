@@ -1,3 +1,5 @@
+import type { DisclaimerStyle } from "../lib/disclaimer";
+
 export type Role = "super_admin" | "owner" | "admin" | "editor" | "designer" | "user";
 
 export type DirectoryPerson = {
@@ -11,9 +13,28 @@ export type DirectoryPerson = {
   website: string;
   pronouns: string;
   domain: string;
+  enabled?: number;
+  /** On a secondary mailbox: the id of the person whose details it signs with. */
+  primaryUserId?: string;
   groupIds: string[];
   [key: string]: string | string[] | number | undefined;
 };
+
+export type LinkSuggestion = { email: string; displayName: string; primaryEmail: string; primaryName: string };
+
+/** A secondary mailbox as it signs: its person's details with its own address (mirrors asLinked on the server). */
+export function linkedView(person: DirectoryPerson, everyone: DirectoryPerson[]): DirectoryPerson {
+  const primary = person.primaryUserId ? everyone.find((u) => u.id === person.primaryUserId) : undefined;
+  if (!primary) return person;
+  return {
+    ...primary,
+    id: person.id,
+    email: person.email,
+    domain: person.domain,
+    primaryUserId: primary.id,
+    groupIds: [...new Set([...primary.groupIds, ...person.groupIds])]
+  };
+}
 
 export type SessionUser = {
   email: string;
@@ -64,7 +85,16 @@ export type TextStyle = {
 
 export type Block =
   | { id: string; type: "text"; content: string; style?: TextStyle; href?: string; underline?: boolean }
-  | { id: string; type: "field"; field: string; prefix?: string; suffix?: string; style?: TextStyle; link?: "email" | "phone" | "url" | "none" }
+  | {
+      id: string;
+      type: "field";
+      field: string;
+      prefix?: string;
+      suffix?: string;
+      prefixStyle?: { color?: string; bold?: boolean };
+      style?: TextStyle;
+      link?: "email" | "phone" | "url" | "none";
+    }
   | { id: string; type: "image"; src: string; width?: number; height?: number; original?: string; alt?: string; href?: string }
   | { id: string; type: "social"; networks: Array<{ name: "linkedin" | "x" | "facebook" | "instagram" | "website"; urlField?: string; url?: string }>; iconSize?: number }
   | { id: string; type: "divider"; color?: string; height?: number }
@@ -126,7 +156,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export type Disclaimer = { id: string; name: string; enabled: number; priority: number; html: string; rules: RuleSet };
+export type Disclaimer = { id: string; name: string; enabled: number; priority: number; html: string; style?: DisclaimerStyle; rules: RuleSet };
 
 export type AlertConfig = {
   enabled: boolean;
@@ -231,7 +261,7 @@ export const api = {
   reorder: (ids: string[]) => request("/api/signatures/reorder", { method: "POST", body: JSON.stringify({ ids }) }),
   preview: (id: string, email: string) => request<{ html: string; user: { displayName: string; email: string } }>(`/api/signatures/${id}/preview?email=${encodeURIComponent(email)}`),
   disclaimers: () => request<Disclaimer[]>("/api/disclaimers"),
-  saveDisclaimer: (body: { id?: string; name: string; html: string; enabled: boolean; rules: RuleSet }) =>
+  saveDisclaimer: (body: { id?: string; name: string; html: string; enabled: boolean; style?: DisclaimerStyle; rules: RuleSet }) =>
     request<Disclaimer>("/api/disclaimers", { method: "POST", body: JSON.stringify(body) }),
   domainNames: () => request<string[]>("/api/domains/names"),
   /** Multipart, so not through request(), which sends JSON. */
@@ -271,6 +301,9 @@ export const api = {
   tester: (body: { from: string; to: string; subject?: string; body?: string }) => request("/api/tester", { method: "POST", body: JSON.stringify(body) }),
   sendTest: (body: { from: string; to: string; subject?: string; body?: string }) =>
     request<{ ok: boolean; sentTo: string; signature: string | null }>("/api/tester/send", { method: "POST", body: JSON.stringify(body) }),
+  mailboxLinks: () => request<{ suggestions: LinkSuggestion[] }>("/api/directory/links"),
+  linkMailboxes: (links: Array<{ email: string; primaryEmail: string }>) =>
+    request<{ saved: DirectoryPerson[] }>("/api/directory/links", { method: "POST", body: JSON.stringify({ links }) }),
   saveUserDetails: (email: string, body: Record<string, string>) =>
     request<DirectoryPerson>(`/api/directory/users/${encodeURIComponent(email)}`, { method: "PUT", body: JSON.stringify(body) }),
   users: () => request<DirectoryPerson[]>("/api/users"),

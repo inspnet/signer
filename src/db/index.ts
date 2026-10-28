@@ -6,6 +6,7 @@ import { DIRECTORY_FIELDS, emptyUser, type DirectoryUser } from "../directory/fi
 import { detectImage, safeStem } from "../util/uploads.js";
 import type { Design } from "../mail/design.js";
 import { defaultProfessionalDesign } from "../mail/templates.js";
+import { cleanDisclaimerStyle, type DisclaimerStyle } from "../mail/disclaimer.js";
 
 export type Role = "super_admin" | "owner" | "admin" | "editor" | "designer" | "user";
 
@@ -79,6 +80,7 @@ export type DisclaimerRecord = {
   enabled: number;
   priority: number;
   html: string;
+  style: DisclaimerStyle;
   createdAt: string;
   updatedAt: string;
 };
@@ -320,6 +322,17 @@ function migrate(d: Database.Database): void {
     d.exec("ALTER TABLE domains ADD COLUMN return_host TEXT NOT NULL DEFAULT ''");
   }
 
+  // Added after users shipped: a secondary mailbox's link to the person who uses it.
+  const disclaimerColumns = (d.prepare("PRAGMA table_info(disclaimers)").all() as { name: string }[]).map((c) => c.name);
+  if (!disclaimerColumns.includes("style_json")) {
+    d.exec("ALTER TABLE disclaimers ADD COLUMN style_json TEXT NOT NULL DEFAULT '{}'");
+  }
+
+  const userColumns = (d.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map((c) => c.name);
+  if (!userColumns.includes("primary_user_id")) {
+    d.exec("ALTER TABLE users ADD COLUMN primary_user_id TEXT NOT NULL DEFAULT ''");
+  }
+
   const existingFields = new Set(
     (d.prepare("SELECT field_key FROM field_permissions").all() as { field_key: string }[]).map((r) => r.field_key)
   );
@@ -483,7 +496,7 @@ const USER_COLUMNS = `id, email, display_name as displayName, given_name as give
   city, state, postal_code as postalCode, country, telephone, mobile, fax, website,
   pronouns, working_hours as workingHours, photo_url as photoUrl, linkedin, x, facebook,
   instagram, custom1, custom2, custom3, custom4, custom5, source, directory_id as directoryId,
-  domain, enabled, overrides_json as overridesJson`;
+  domain, enabled, overrides_json as overridesJson, primary_user_id as primaryUserId`;
 
 function hydrateUser(row: Record<string, unknown> | undefined): DirectoryUser | null {
   if (!row) return null;
@@ -524,6 +537,7 @@ function hydrateUser(row: Record<string, unknown> | undefined): DirectoryUser | 
     directoryId: String(row.directoryId || ""),
     domain: String(row.domain || ""),
     enabled: Number(row.enabled ?? 1),
+    primaryUserId: String(row.primaryUserId || ""),
     groupIds: []
   };
   for (const [k, v] of Object.entries(overrides)) {
@@ -543,6 +557,17 @@ export function getUserByEmail(email: string): DirectoryUser | null {
     .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE lower(email) = lower(?)`)
     .get(email) as Record<string, unknown> | undefined;
   return hydrateUser(row);
+}
+
+export function getUserById(id: string): DirectoryUser | null {
+  if (!id) return null;
+  const row = getDb().prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+  return hydrateUser(row);
+}
+
+/** Link a secondary mailbox to the person who uses it, or unlink it with "". */
+export function setPrimaryUserId(userId: string, primaryUserId: string): void {
+  getDb().prepare("UPDATE users SET primary_user_id = ? WHERE id = ?").run(primaryUserId, userId);
 }
 
 export function listUsers(): DirectoryUser[] {
@@ -565,15 +590,20 @@ export function upsertDirectoryUser(user: DirectoryUser, preserveOverrides = tru
     // deleted and re-created in the directory. Email is unique, so take that
     // row over instead of failing the whole sync, and keep what the person
     // saved under My Details.
-    const sameEmail = d.prepare("SELECT id, overrides_json FROM users WHERE email = ? AND id != ?").get(user.email, user.id) as
-      | { id: string; overrides_json: string }
-      | undefined;
+    const sameEmail = d
+      .prepare("SELECT id, overrides_json, primary_user_id FROM users WHERE email = ? AND id != ?")
+      .get(user.email, user.id) as { id: string; overrides_json: string; primary_user_id: string } | undefined;
     if (sameEmail) {
       if (preserveOverrides && !existing) overrides = sameEmail.overrides_json;
       d.prepare("DELETE FROM group_members WHERE user_id = ?").run(sameEmail.id);
       d.prepare("DELETE FROM users WHERE id = ?").run(sameEmail.id);
     }
     writeDirectoryUser(user, overrides);
+    if (sameEmail) {
+      // Keep mailbox links: this row's own, and those of mailboxes linked to it.
+      if (sameEmail.primary_user_id && !existing) setPrimaryUserId(user.id, sameEmail.primary_user_id);
+      d.prepare("UPDATE users SET primary_user_id = ? WHERE primary_user_id = ?").run(user.id, sameEmail.id);
+    }
   })();
 }
 
@@ -784,14 +814,18 @@ export function reorderSignatures(ids: string[]): void {
 export function listDisclaimers(): (DisclaimerRecord & { rules: RuleSet })[] {
   const rows = getDb()
     .prepare(
-      `SELECT id, name, enabled, priority, html, created_at as createdAt, updated_at as updatedAt FROM disclaimers ORDER BY priority, name`
+      `SELECT id, name, enabled, priority, html, style_json as styleJson, created_at as createdAt, updated_at as updatedAt FROM disclaimers ORDER BY priority, name`
     )
-    .all() as DisclaimerRecord[];
-  return rows.map((r) => {
+    .all() as Array<Omit<DisclaimerRecord, "style"> & { styleJson: string }>;
+  return rows.map(({ styleJson, ...r }) => {
     const rulesRow = getDb().prepare("SELECT rules_json FROM disclaimer_rules WHERE disclaimer_id = ?").get(r.id) as
       | { rules_json: string }
       | undefined;
-    return { ...r, rules: rulesRow ? parseJson(rulesRow.rules_json, defaultRules()) : defaultRules() };
+    return {
+      ...r,
+      style: cleanDisclaimerStyle(parseJson(styleJson, {})),
+      rules: rulesRow ? parseJson(rulesRow.rules_json, defaultRules()) : defaultRules()
+    };
   });
 }
 
@@ -800,6 +834,7 @@ export function saveDisclaimer(input: {
   name: string;
   html: string;
   enabled?: boolean;
+  style?: DisclaimerStyle;
   rules?: RuleSet;
 }): DisclaimerRecord & { rules: RuleSet } {
   const now = new Date().toISOString();
@@ -807,15 +842,22 @@ export function saveDisclaimer(input: {
   const existing = listDisclaimers().find((d) => d.id === id);
   if (existing) {
     getDb()
-      .prepare("UPDATE disclaimers SET name=?, html=?, enabled=?, updated_at=? WHERE id=?")
-      .run(input.name, input.html, input.enabled === undefined ? existing.enabled : input.enabled ? 1 : 0, now, id);
+      .prepare("UPDATE disclaimers SET name=?, html=?, enabled=?, style_json=?, updated_at=? WHERE id=?")
+      .run(
+        input.name,
+        input.html,
+        input.enabled === undefined ? existing.enabled : input.enabled ? 1 : 0,
+        JSON.stringify(input.style === undefined ? existing.style : cleanDisclaimerStyle(input.style)),
+        now,
+        id
+      );
   } else {
     const max = (getDb().prepare("SELECT COALESCE(MAX(priority), -1) as m FROM disclaimers").get() as { m: number }).m;
     getDb()
       .prepare(
-        `INSERT INTO disclaimers (id, name, enabled, priority, html, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO disclaimers (id, name, enabled, priority, html, style_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, input.name, input.enabled === false ? 0 : 1, max + 1, input.html, now, now);
+      .run(id, input.name, input.enabled === false ? 0 : 1, max + 1, input.html, JSON.stringify(cleanDisclaimerStyle(input.style)), now, now);
   }
   if (input.rules) {
     getDb()
@@ -1126,9 +1168,11 @@ export function pruneDirectoryUsers(source: string, seenIds: string[]): number {
   const tx = d.transaction(() => {
     const members = d.prepare("DELETE FROM group_members WHERE user_id = ?");
     const users = d.prepare("DELETE FROM users WHERE id = ?");
+    const unlink = d.prepare("UPDATE users SET primary_user_id = '' WHERE primary_user_id = ?");
     for (const id of stale) {
       members.run(id);
       users.run(id);
+      unlink.run(id);
     }
   });
   tx();

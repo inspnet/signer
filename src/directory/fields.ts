@@ -66,6 +66,8 @@ export type DirectoryUser = {
   directoryId: string;
   domain: string;
   enabled: number;
+  /** Set on a secondary mailbox (a shared mailbox for another company, say): the person whose details it signs with. */
+  primaryUserId?: string;
   groupIds: string[];
 };
 

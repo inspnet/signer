@@ -5,6 +5,8 @@ import { HtmlFrame } from "../components/HtmlFrame";
 import { PageHeader } from "../components/PageHeader";
 import { RichTextEditor } from "../components/RichTextEditor";
 import { describeRules, RULE_TABS, RuleEditor, type RuleTab } from "../components/RuleEditor";
+import { baseCss, DISCLAIMER_DEFAULTS, NEW_DISCLAIMER_STYLE, renderDisclaimer, type DisclaimerStyle } from "../lib/disclaimer";
+import { APTOS_STACK, FONTS } from "../lib/fonts";
 
 type Group = { id: string; name: string };
 
@@ -39,7 +41,7 @@ export function DisclaimersPage() {
                 {!d.enabled && <span className="ml-2 rounded bg-mist px-2 py-0.5 text-xs text-slate-600">Disabled</span>}
               </div>
               <div className="text-sm text-slate-500 mt-1">{describeRules(d.rules, groups)}</div>
-              <HtmlFrame html={d.html} className="mt-3 w-full h-24 border-0 bg-transparent" />
+              <HtmlFrame html={renderDisclaimer(d.html, d.style)} className="mt-3 w-full h-24 border-0 bg-transparent" />
             </div>
             <div className="flex gap-2 shrink-0 items-start">
               <Link className="btn btn-ghost" to={`/disclaimers/${d.id}`}>
@@ -60,6 +62,104 @@ export function DisclaimersPage() {
         ))}
         {items.length === 0 && <p className="text-slate-500">No disclaimers yet.</p>}
       </div>
+    </div>
+  );
+}
+
+const LINE_HEIGHTS: Array<[string, string]> = [
+  ["", "Email default"],
+  ["1", "Tight (1.0)"],
+  ["1.15", "Close (1.15)"],
+  ["1.3", "Normal (1.3)"],
+  ["1.5", "Open (1.5)"]
+];
+
+/** The disclaimer's base text and its spacing, as the email lays it out. */
+function TextAndSpacing({ style, onChange }: { style: DisclaimerStyle; onChange: (style: DisclaimerStyle) => void }) {
+  const set = (patch: Partial<DisclaimerStyle>) => {
+    const next = { ...style, ...patch };
+    for (const k of Object.keys(next) as Array<keyof DisclaimerStyle>) if (next[k] === undefined || next[k] === "") delete next[k];
+    onChange(next);
+  };
+  const num = (v: string) => (v.trim() === "" ? undefined : Number(v));
+  return (
+    <div className="rounded-xl border border-line p-4">
+      <div className="text-sm font-medium text-ink">Text &amp; spacing</div>
+      <p className="text-xs text-slate-500 mt-0.5 mb-3">
+        The base for the whole notice, blank lines included. Formatting applied in the editor (bold, a size on some words) still wins.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 text-sm">
+        <label className="block">
+          Font
+          <select className="input mt-1" value={style.fontFamily ?? APTOS_STACK} onChange={(e) => set({ fontFamily: e.target.value === APTOS_STACK ? undefined : e.target.value })}>
+            {FONTS.map(([value, label]) => (
+              <option key={label} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          Size (pt)
+          <input
+            type="number"
+            step={0.5}
+            min={5}
+            max={36}
+            placeholder="12 (email)"
+            className="input mt-1"
+            value={style.fontSize ?? ""}
+            onChange={(e) => set({ fontSize: num(e.target.value) })}
+          />
+        </label>
+        <label className="block">
+          Colour
+          <div className="flex gap-2 mt-1">
+            <input
+              type="color"
+              className="h-9 w-full rounded-md border border-line"
+              value={style.color ?? "#4b5563"}
+              onChange={(e) => set({ color: e.target.value })}
+            />
+          </div>
+        </label>
+        <label className="block">
+          Line height
+          <select className="input mt-1" value={style.lineHeight === undefined ? "" : String(style.lineHeight)} onChange={(e) => set({ lineHeight: num(e.target.value) })}>
+            {LINE_HEIGHTS.map(([value, label]) => (
+              <option key={label} value={value}>
+                {label}
+              </option>
+            ))}
+            {style.lineHeight !== undefined && !LINE_HEIGHTS.some(([v]) => v === String(style.lineHeight)) && (
+              <option value={String(style.lineHeight)}>{style.lineHeight}</option>
+            )}
+          </select>
+        </label>
+        <label className="block">
+          Paragraph gap (pt)
+          <input
+            type="number"
+            min={0}
+            max={48}
+            className="input mt-1"
+            value={style.paragraphSpacing ?? DISCLAIMER_DEFAULTS.paragraphSpacing}
+            onChange={(e) => set({ paragraphSpacing: num(e.target.value) ?? 0 })}
+          />
+        </label>
+        <label className="block">
+          Space above (pt)
+          <input
+            type="number"
+            min={0}
+            max={72}
+            className="input mt-1"
+            value={style.spaceAbove ?? DISCLAIMER_DEFAULTS.spaceAbove}
+            onChange={(e) => set({ spaceAbove: num(e.target.value) ?? 0 })}
+          />
+        </label>
+      </div>
+      <p className="text-xs text-slate-500 mt-2">Space above is the gap below the signature, or below the disclaimer before this one.</p>
     </div>
   );
 }
@@ -89,7 +189,8 @@ export function DisclaimerEditPage() {
         id: "",
         name: "New disclaimer",
         enabled: 1,
-        html: "<p style='font-size:8pt;color:#4b5563'>Confidential.</p>",
+        html: "<p>Confidential.</p>",
+        style: NEW_DISCLAIMER_STYLE,
         rules: NEW_RULES
       });
       return;
@@ -107,6 +208,7 @@ export function DisclaimerEditPage() {
         name: item.name,
         html: item.html,
         enabled: Boolean(item.enabled),
+        style: item.style ?? {},
         rules: item.rules
       });
       setMessage("Saved. It applies to the next message that matches.");
@@ -146,13 +248,19 @@ export function DisclaimerEditPage() {
             </div>
             <div className="text-sm">
               <div className="mb-1">Text</div>
-              <RichTextEditor value={item.html} onChange={(html) => setItem({ ...item, html })} />
+              <RichTextEditor
+                value={item.html}
+                onChange={(html) => setItem({ ...item, html })}
+                baseStyle={baseCss(item.style ?? {})}
+                paragraphSpacing={item.style?.paragraphSpacing ?? DISCLAIMER_DEFAULTS.paragraphSpacing}
+              />
               <p className="mt-2 text-xs text-slate-500 leading-5">
-                What you see is what recipients get, below the signature. Use the Senders tab to limit this to one domain (for
-                example, a different legal entity per domain), a group or particular people, and Recipients for external-only
-                notices.
+                What you see is what recipients get, below the signature. Enter starts a new paragraph, spaced as set below; Shift+Enter
+                breaks the line with no extra space. Use the Senders tab to limit this to one domain (for example, a different legal
+                entity per domain), a group or particular people, and Recipients for external-only notices.
               </p>
             </div>
+            <TextAndSpacing style={item.style ?? {}} onChange={(style) => setItem({ ...item, style })} />
           </div>
         ) : (
           <RuleEditor

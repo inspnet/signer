@@ -13,7 +13,7 @@ import {
   Undo2,
   UserRound
 } from "lucide-react";
-import { api, type Block, type CellSide, type DirectoryPerson, type Signature, type TableCell } from "../api/client";
+import { api, linkedView, type Block, type CellSide, type DirectoryPerson, type Signature, type TableCell } from "../api/client";
 import { DIRECTORY_FIELDS } from "../lib/fields";
 import { APTOS_STACK, FONTS, inPoints } from "../lib/fonts";
 import { defaultWidth, fitImages, isUpload, loadImage, planFit, type FitPlan } from "../lib/images";
@@ -131,7 +131,11 @@ export function DesignerPage() {
   }, [id]);
 
   const user = useMemo<PreviewUser>(
-    () => users.find((u) => u.email === previewEmail) || users[0] || { email: "", displayName: "" },
+    () => {
+      const chosen = users.find((u) => u.email === previewEmail) || users[0];
+      // A secondary mailbox previews as it signs: its person's details, its own address.
+      return chosen ? linkedView(chosen, users) : { email: "", displayName: "" };
+    },
     [users, previewEmail]
   );
   const dirty = sig ? JSON.stringify({ name: sig.name, design: sig.design }) !== saved : false;
@@ -563,6 +567,36 @@ function Inspector({
             Prefix
             <input className="input mt-1" value={block.prefix || ""} onChange={(e) => onChange({ ...block, prefix: e.target.value })} />
           </label>
+          {block.prefix && (
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={Boolean(block.prefixStyle?.color)}
+                  onChange={(e) =>
+                    onChange({ ...block, prefixStyle: { ...block.prefixStyle, color: e.target.checked ? block.style?.color ?? "#0f766e" : undefined } })
+                  }
+                />
+                Prefix colour
+              </label>
+              {block.prefixStyle?.color && (
+                <input
+                  type="color"
+                  className="h-8 w-12 rounded-md border border-line"
+                  value={block.prefixStyle.color}
+                  onChange={(e) => onChange({ ...block, prefixStyle: { ...block.prefixStyle, color: e.target.value } })}
+                />
+              )}
+              <label className="flex items-center gap-2 ml-auto">
+                <input
+                  type="checkbox"
+                  checked={Boolean(block.prefixStyle?.bold)}
+                  onChange={(e) => onChange({ ...block, prefixStyle: { ...block.prefixStyle, bold: e.target.checked || undefined } })}
+                />
+                Bold
+              </label>
+            </div>
+          )}
           <label className="block">
             Suffix
             <input className="input mt-1" value={block.suffix || ""} onChange={(e) => onChange({ ...block, suffix: e.target.value })} />

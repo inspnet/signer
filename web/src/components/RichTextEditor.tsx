@@ -1,5 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import { Bold, Code, Italic, Link2, List, RemoveFormatting, Underline } from "lucide-react";
+import {
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
+  Bold,
+  Code,
+  Italic,
+  Link2,
+  List,
+  ListOrdered,
+  Minus,
+  RemoveFormatting,
+  Strikethrough,
+  Superscript,
+  Underline
+} from "lucide-react";
+import type { CSSProperties } from "react";
 import { APTOS_STACK, FONTS } from "../lib/fonts";
 
 /**
@@ -9,10 +26,13 @@ import { APTOS_STACK, FONTS } from "../lib/fonts";
  *
  * Pasting inserts plain text: rich paste from Word or a web page brings
  * classes and fonts that mail clients render unpredictably.
+ *
+ * Enter starts a paragraph (<p>), spaced by the paragraph spacing the caller
+ * gives; Shift+Enter is a line break within one, with no extra space.
  */
 
 /** Points, as Outlook and Word use. */
-const SIZES = ["8pt", "9pt", "10pt", "11pt", "12pt", "14pt"] as const;
+const SIZES = ["6pt", "7pt", "7.5pt", "8pt", "8.5pt", "9pt", "10pt", "11pt", "12pt", "14pt", "16pt"] as const;
 
 function exec(command: string, value?: string): void {
   document.execCommand("styleWithCSS", false, "true");
@@ -22,11 +42,17 @@ function exec(command: string, value?: string): void {
 export function RichTextEditor({
   value,
   onChange,
-  minHeight = 180
+  minHeight = 180,
+  baseStyle,
+  paragraphSpacing = 4
 }: {
   value: string;
   onChange: (html: string) => void;
   minHeight?: number;
+  /** The text's base font, size, colour and line height, as the email will wrap it. */
+  baseStyle?: Record<string, string>;
+  /** Points between paragraphs, as the email will space them. */
+  paragraphSpacing?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const emitted = useRef<string | null>(null);
@@ -50,6 +76,8 @@ export function RichTextEditor({
 
   const run = (command: string, arg?: string) => {
     ref.current?.focus();
+    // Enter makes <p>, not the browser's default <div>.
+    document.execCommand("defaultParagraphSeparator", false, "p");
     exec(command, arg);
     emit();
   };
@@ -90,6 +118,12 @@ export function RichTextEditor({
             </button>
             <button type="button" className={tool} title="Underline" onMouseDown={keep} onClick={() => run("underline")}>
               <Underline size={15} />
+            </button>
+            <button type="button" className={tool} title="Strikethrough" onMouseDown={keep} onClick={() => run("strikeThrough")}>
+              <Strikethrough size={15} />
+            </button>
+            <button type="button" className={tool} title="Superscript (®, ™, 1st)" onMouseDown={keep} onClick={() => run("superscript")}>
+              <Superscript size={15} />
             </button>
             <span className="mx-1 h-5 w-px bg-line" />
             <select
@@ -137,6 +171,38 @@ export function RichTextEditor({
             <button type="button" className={tool} title="Bulleted list" onMouseDown={keep} onClick={() => run("insertUnorderedList")}>
               <List size={15} />
             </button>
+            <button type="button" className={tool} title="Numbered list" onMouseDown={keep} onClick={() => run("insertOrderedList")}>
+              <ListOrdered size={15} />
+            </button>
+            <span className="mx-1 h-5 w-px bg-line" />
+            <button type="button" className={tool} title="Align left" onMouseDown={keep} onClick={() => run("justifyLeft")}>
+              <AlignLeft size={15} />
+            </button>
+            <button type="button" className={tool} title="Centre" onMouseDown={keep} onClick={() => run("justifyCenter")}>
+              <AlignCenter size={15} />
+            </button>
+            <button type="button" className={tool} title="Align right" onMouseDown={keep} onClick={() => run("justifyRight")}>
+              <AlignRight size={15} />
+            </button>
+            <button type="button" className={tool} title="Justify" onMouseDown={keep} onClick={() => run("justifyFull")}>
+              <AlignJustify size={15} />
+            </button>
+            <button
+              type="button"
+              className={tool}
+              title="Horizontal line"
+              onMouseDown={keep}
+              onClick={() => {
+                run("insertHorizontalRule");
+                // A thin grey rule with no default margins, rather than the browser's bevelled one.
+                ref.current?.querySelectorAll("hr:not([style])").forEach((hr) => {
+                  hr.setAttribute("style", "border:0;border-top:1px solid #d1d5db;margin:4pt 0;");
+                });
+                emit();
+              }}
+            >
+              <Minus size={15} />
+            </button>
             <button type="button" className={tool} title="Clear formatting" onMouseDown={keep} onClick={() => run("removeFormat")}>
               <RemoveFormatting size={15} />
             </button>
@@ -170,9 +236,19 @@ export function RichTextEditor({
           aria-multiline="true"
           contentEditable
           suppressContentEditableWarning
-          className="p-4 outline-none [&_a]:text-accent-2 [&_a]:underline [&_ul]:list-disc [&_ul]:pl-5"
-          // As in the email: Aptos unless the text says otherwise, and Outlook's 12pt where no size is set.
-          style={{ minHeight, fontFamily: APTOS_STACK, fontSize: "12pt", color: "#4b5563" }}
+          className="p-4 outline-none [&_a]:text-accent-2 [&_a]:underline [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mt-0 [&_p]:mb-[var(--para)] [&_div]:mt-0 [&_div]:mb-[var(--para)] [&_ul]:mt-0 [&_ul]:mb-[var(--para)] [&_ol]:mt-0 [&_ol]:mb-[var(--para)]"
+          // As in the email: the disclaimer's base style, else Aptos at Outlook's 12pt.
+          style={
+            {
+              minHeight,
+              fontFamily: APTOS_STACK,
+              fontSize: "12pt",
+              color: "#4b5563",
+              ...baseStyle,
+              "--para": `${paragraphSpacing}pt`
+            } as CSSProperties
+          }
+          onFocus={() => document.execCommand("defaultParagraphSeparator", false, "p")}
           onInput={emit}
           onBlur={emit}
           onPaste={(e) => {
