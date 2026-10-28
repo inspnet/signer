@@ -6,6 +6,7 @@ import { DIRECTORY_FIELDS, emptyUser, type DirectoryUser } from "../directory/fi
 import { detectImage, safeStem } from "../util/uploads.js";
 import type { Design } from "../mail/design.js";
 import { defaultProfessionalDesign } from "../mail/templates.js";
+import { cleanDisclaimerStyle, type DisclaimerStyle } from "../mail/disclaimer.js";
 
 export type Role = "super_admin" | "owner" | "admin" | "editor" | "designer" | "user";
 
@@ -79,6 +80,7 @@ export type DisclaimerRecord = {
   enabled: number;
   priority: number;
   html: string;
+  style: DisclaimerStyle;
   createdAt: string;
   updatedAt: string;
 };
@@ -321,6 +323,11 @@ function migrate(d: Database.Database): void {
   }
 
   // Added after users shipped: a secondary mailbox's link to the person who uses it.
+  const disclaimerColumns = (d.prepare("PRAGMA table_info(disclaimers)").all() as { name: string }[]).map((c) => c.name);
+  if (!disclaimerColumns.includes("style_json")) {
+    d.exec("ALTER TABLE disclaimers ADD COLUMN style_json TEXT NOT NULL DEFAULT '{}'");
+  }
+
   const userColumns = (d.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map((c) => c.name);
   if (!userColumns.includes("primary_user_id")) {
     d.exec("ALTER TABLE users ADD COLUMN primary_user_id TEXT NOT NULL DEFAULT ''");
@@ -807,14 +814,18 @@ export function reorderSignatures(ids: string[]): void {
 export function listDisclaimers(): (DisclaimerRecord & { rules: RuleSet })[] {
   const rows = getDb()
     .prepare(
-      `SELECT id, name, enabled, priority, html, created_at as createdAt, updated_at as updatedAt FROM disclaimers ORDER BY priority, name`
+      `SELECT id, name, enabled, priority, html, style_json as styleJson, created_at as createdAt, updated_at as updatedAt FROM disclaimers ORDER BY priority, name`
     )
-    .all() as DisclaimerRecord[];
-  return rows.map((r) => {
+    .all() as Array<Omit<DisclaimerRecord, "style"> & { styleJson: string }>;
+  return rows.map(({ styleJson, ...r }) => {
     const rulesRow = getDb().prepare("SELECT rules_json FROM disclaimer_rules WHERE disclaimer_id = ?").get(r.id) as
       | { rules_json: string }
       | undefined;
-    return { ...r, rules: rulesRow ? parseJson(rulesRow.rules_json, defaultRules()) : defaultRules() };
+    return {
+      ...r,
+      style: cleanDisclaimerStyle(parseJson(styleJson, {})),
+      rules: rulesRow ? parseJson(rulesRow.rules_json, defaultRules()) : defaultRules()
+    };
   });
 }
 
@@ -823,6 +834,7 @@ export function saveDisclaimer(input: {
   name: string;
   html: string;
   enabled?: boolean;
+  style?: DisclaimerStyle;
   rules?: RuleSet;
 }): DisclaimerRecord & { rules: RuleSet } {
   const now = new Date().toISOString();
@@ -830,15 +842,22 @@ export function saveDisclaimer(input: {
   const existing = listDisclaimers().find((d) => d.id === id);
   if (existing) {
     getDb()
-      .prepare("UPDATE disclaimers SET name=?, html=?, enabled=?, updated_at=? WHERE id=?")
-      .run(input.name, input.html, input.enabled === undefined ? existing.enabled : input.enabled ? 1 : 0, now, id);
+      .prepare("UPDATE disclaimers SET name=?, html=?, enabled=?, style_json=?, updated_at=? WHERE id=?")
+      .run(
+        input.name,
+        input.html,
+        input.enabled === undefined ? existing.enabled : input.enabled ? 1 : 0,
+        JSON.stringify(input.style === undefined ? existing.style : cleanDisclaimerStyle(input.style)),
+        now,
+        id
+      );
   } else {
     const max = (getDb().prepare("SELECT COALESCE(MAX(priority), -1) as m FROM disclaimers").get() as { m: number }).m;
     getDb()
       .prepare(
-        `INSERT INTO disclaimers (id, name, enabled, priority, html, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO disclaimers (id, name, enabled, priority, html, style_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, input.name, input.enabled === false ? 0 : 1, max + 1, input.html, now, now);
+      .run(id, input.name, input.enabled === false ? 0 : 1, max + 1, input.html, JSON.stringify(cleanDisclaimerStyle(input.style)), now, now);
   }
   if (input.rules) {
     getDb()

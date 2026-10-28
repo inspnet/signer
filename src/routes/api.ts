@@ -47,6 +47,7 @@ import {
 } from "../db/index.js";
 import { DIRECTORY_FIELDS } from "../directory/fields.js";
 import { LinkError, linkMailbox, senderProfile, suggestLinks } from "../directory/links.js";
+import { cleanDisclaimerStyle } from "../mail/disclaimer.js";
 import { syncDirectory } from "../directory/sync.js";
 import { getRangeStatus } from "../smtp/ipranges.js";
 import { composeTestMessage, signatureHtml, testSignature } from "../mail/process.js";
@@ -217,12 +218,13 @@ export function registerApi(app: FastifyInstance): void {
   app.post("/api/disclaimers", async (req, reply) => {
     const user = requireRole(["admin", "editor", "designer"], req, reply);
     if (!user) return;
-    const body = req.body as { name?: string; html?: string; enabled?: boolean; rules?: RuleSet; id?: string };
+    const body = req.body as { name?: string; html?: string; enabled?: boolean; style?: unknown; rules?: RuleSet; id?: string };
     const saved = saveDisclaimer({
       id: body.id,
       name: body.name || "Untitled disclaimer",
       html: body.html || "<p></p>",
       enabled: body.enabled,
+      style: body.style === undefined ? undefined : cleanDisclaimerStyle(body.style),
       rules: body.rules
     });
     audit(user.email, "save_disclaimer", saved.id);

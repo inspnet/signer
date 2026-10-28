@@ -1,3 +1,5 @@
+import type { DisclaimerStyle } from "../lib/disclaimer";
+
 export type Role = "super_admin" | "owner" | "admin" | "editor" | "designer" | "user";
 
 export type DirectoryPerson = {
@@ -83,7 +85,16 @@ export type TextStyle = {
 
 export type Block =
   | { id: string; type: "text"; content: string; style?: TextStyle; href?: string; underline?: boolean }
-  | { id: string; type: "field"; field: string; prefix?: string; suffix?: string; style?: TextStyle; link?: "email" | "phone" | "url" | "none" }
+  | {
+      id: string;
+      type: "field";
+      field: string;
+      prefix?: string;
+      suffix?: string;
+      prefixStyle?: { color?: string; bold?: boolean };
+      style?: TextStyle;
+      link?: "email" | "phone" | "url" | "none";
+    }
   | { id: string; type: "image"; src: string; width?: number; height?: number; original?: string; alt?: string; href?: string }
   | { id: string; type: "social"; networks: Array<{ name: "linkedin" | "x" | "facebook" | "instagram" | "website"; urlField?: string; url?: string }>; iconSize?: number }
   | { id: string; type: "divider"; color?: string; height?: number }
@@ -145,7 +156,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export type Disclaimer = { id: string; name: string; enabled: number; priority: number; html: string; rules: RuleSet };
+export type Disclaimer = { id: string; name: string; enabled: number; priority: number; html: string; style?: DisclaimerStyle; rules: RuleSet };
 
 export type AlertConfig = {
   enabled: boolean;
@@ -250,7 +261,7 @@ export const api = {
   reorder: (ids: string[]) => request("/api/signatures/reorder", { method: "POST", body: JSON.stringify({ ids }) }),
   preview: (id: string, email: string) => request<{ html: string; user: { displayName: string; email: string } }>(`/api/signatures/${id}/preview?email=${encodeURIComponent(email)}`),
   disclaimers: () => request<Disclaimer[]>("/api/disclaimers"),
-  saveDisclaimer: (body: { id?: string; name: string; html: string; enabled: boolean; rules: RuleSet }) =>
+  saveDisclaimer: (body: { id?: string; name: string; html: string; enabled: boolean; style?: DisclaimerStyle; rules: RuleSet }) =>
     request<Disclaimer>("/api/disclaimers", { method: "POST", body: JSON.stringify(body) }),
   domainNames: () => request<string[]>("/api/domains/names"),
   /** Multipart, so not through request(), which sends JSON. */

@@ -234,7 +234,9 @@ function BlockBody({ block }: { block: Block }) {
       const value = val(user, block.field);
       return (
         <p style={styleOf(block.style)}>
-          {block.prefix}
+          {block.prefix && (
+            <span style={{ color: block.prefixStyle?.color || undefined, fontWeight: block.prefixStyle?.bold ? 700 : undefined }}>{block.prefix}</span>
+          )}
           {value || <span className="text-slate-300 italic">{`{${block.field}}`}</span>}
           {block.suffix}
         </p>

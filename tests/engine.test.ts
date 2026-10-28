@@ -335,6 +335,20 @@ describe("design renderer: tables and images", () => {
     expect(html).not.toContain("<tr><td valign");
   });
 
+  it("colours and bolds a field's prefix on its own, and leaves an unstyled prefix as plain text", () => {
+    const user = emptyUser("scott@inspired.co");
+    user.telephone = "+1 604 555 0100";
+    const field = (prefixStyle?: object) => ({
+      width: 520,
+      blocks: [{ id: "f", type: "field" as const, field: "telephone", prefix: "O: ", prefixStyle, style: { color: "#374151" } }]
+    });
+    expect(renderDesign(field({ color: "#0f766e", bold: true }), user)).toContain(
+      '<span style="color:#0f766e;font-weight:bold;">O: </span>+1 604 555 0100'
+    );
+    expect(renderDesign(field(), user)).toContain(">O: +1 604 555 0100<");
+    expect(renderDesign(field({ color: 'red;"><script>' }), user)).not.toContain("<script>");
+  });
+
   it("gives a fitted image its height, for Outlook, and height:auto for everyone else", () => {
     const user = emptyUser("scott@inspired.co");
     const html = renderDesign({ width: 520, blocks: [{ id: "i", type: "image", src: "/uploads/2_logo-280w.png", width: 140, height: 35 }] }, user);

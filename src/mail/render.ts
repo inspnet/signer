@@ -119,6 +119,16 @@ function renderCell(block: Extract<Block, { type: "table" }>, cell: TableCell, r
   return `<td ${attrs.join(" ")} style="${style.join(";")};">${inner}</td>`;
 }
 
+/** A field's prefix, in its own colour or weight when one is set. */
+function prefixHtml(prefix: string, style?: { color?: string; bold?: boolean }): string {
+  if (!prefix) return "";
+  const css = [];
+  const color = cssValue(style?.color, "");
+  if (color) css.push(`color:${color}`);
+  if (style?.bold) css.push("font-weight:bold");
+  return css.length ? `<span style="${css.join(";")};">${escapeHtml(prefix)}</span>` : escapeHtml(prefix);
+}
+
 function wrapLink(html: string, href: string | null, underline = false): string {
   if (!href) return html;
   return `<a href="${escapeHtml(href)}" style="color:inherit;text-decoration:${underline ? "underline" : "none"};">${html}</a>`;
@@ -144,7 +154,7 @@ function renderBlock(block: Block, user: DirectoryUser, hideEmpty: boolean): str
     case "field": {
       const value = fieldValue(user, block.field);
       if (hideEmpty && !value) return "";
-      const text = `${escapeHtml(block.prefix ?? "")}${escapeHtml(value)}${escapeHtml(block.suffix ?? "")}`;
+      const text = `${prefixHtml(block.prefix ?? "", block.prefixStyle)}${escapeHtml(value)}${escapeHtml(block.suffix ?? "")}`;
       let href: string | null = null;
       if (block.link === "email" && value) href = safeHref(`mailto:${value.replace(/[\r\n]/g, "")}`);
       if (block.link === "phone" && value) href = safeHref(`tel:${value.replace(/[^\d+]/g, "")}`);

@@ -95,9 +95,47 @@ describe("disclaimers by domain", () => {
 });
 
 describe("between the signature and the disclaimer", () => {
-  it("always leaves a line break", () => {
+  it("always leaves a set space, and gives paragraphs their own margins", () => {
     const html = testSignature({ from: "scott@inspired.co", to: "ada@contoso.example" }).htmlPreview;
-    expect(html).toMatch(/<br><div style="font-family:Aptos[^"]*;"><p>Inspired Ltd, registered in England\.<\/p><\/div>/);
+    expect(html).toContain(
+      '<div style="height:8pt;line-height:8pt;font-size:1px;mso-line-height-rule:exactly;">&nbsp;</div><div style="font-family:Aptos'
+    );
+    expect(html).toContain('<p style="margin:0 0 4pt 0;">Inspired Ltd, registered in England.</p>');
+  });
+});
+
+describe("disclaimer text and spacing settings", () => {
+  it("sets the base font, size, colour and line height, and the spacing, from the disclaimer's style", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/disclaimers",
+      headers: { cookie: cookieHeader },
+      payload: {
+        name: "Styled",
+        html: "<p>One</p><p>Two<br>still two</p>",
+        style: { fontFamily: "Arial, sans-serif", fontSize: 8, color: "#6b7280", lineHeight: 1.15, paragraphSpacing: 0, spaceAbove: 0, junk: "x" },
+        rules: { senders: { everyone: true }, senderExceptions: {}, recipients: { any: true }, dateTime: null, advanced: { bodySearch: "anywhere", ifNotApplied: "continue" } }
+      }
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().style).toEqual({ fontFamily: "Arial, sans-serif", fontSize: 8, color: "#6b7280", lineHeight: 1.15, paragraphSpacing: 0, spaceAbove: 0 });
+    const html = testSignature({ from: "scott@inspired.co", to: "ada@contoso.example" }).htmlPreview;
+    expect(html).toContain(
+      '<div style="font-family:Arial, sans-serif;font-size:8pt;color:#6b7280;line-height:115%;"><p style="margin:0 0 0pt 0;">One</p><p style="margin:0 0 0pt 0;">Two<br>still two</p></div>'
+    );
+    db.deleteDisclaimer(res.json().id);
+  });
+
+  it("keeps margins the HTML sets, and refuses values that would break out of the style", async () => {
+    const { spaceParagraphs, cleanDisclaimerStyle } = await import("../src/mail/disclaimer.js");
+    expect(spaceParagraphs('<p style="margin:12px 0">A</p><div style="color:red">B</div><ul><li>C</li></ul>', 6)).toBe(
+      '<p style="margin:12px 0">A</p><div style="margin:0 0 6pt 0;color:red">B</div><ul style="margin:0 0 6pt 0;padding-left:20px;"><li>C</li></ul>'
+    );
+    expect(cleanDisclaimerStyle({ fontFamily: 'Arial;}" onload="x', color: "red;", fontSize: 500, spaceAbove: -4 })).toEqual({
+      fontFamily: "Arial onload=x",
+      fontSize: 36,
+      spaceAbove: 0
+    });
   });
 });
 

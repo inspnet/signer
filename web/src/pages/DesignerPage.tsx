@@ -567,6 +567,36 @@ function Inspector({
             Prefix
             <input className="input mt-1" value={block.prefix || ""} onChange={(e) => onChange({ ...block, prefix: e.target.value })} />
           </label>
+          {block.prefix && (
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={Boolean(block.prefixStyle?.color)}
+                  onChange={(e) =>
+                    onChange({ ...block, prefixStyle: { ...block.prefixStyle, color: e.target.checked ? block.style?.color ?? "#0f766e" : undefined } })
+                  }
+                />
+                Prefix colour
+              </label>
+              {block.prefixStyle?.color && (
+                <input
+                  type="color"
+                  className="h-8 w-12 rounded-md border border-line"
+                  value={block.prefixStyle.color}
+                  onChange={(e) => onChange({ ...block, prefixStyle: { ...block.prefixStyle, color: e.target.value } })}
+                />
+              )}
+              <label className="flex items-center gap-2 ml-auto">
+                <input
+                  type="checkbox"
+                  checked={Boolean(block.prefixStyle?.bold)}
+                  onChange={(e) => onChange({ ...block, prefixStyle: { ...block.prefixStyle, bold: e.target.checked || undefined } })}
+                />
+                Bold
+              </label>
+            </div>
+          )}
           <label className="block">
             Suffix
             <input className="input mt-1" value={block.suffix || ""} onChange={(e) => onChange({ ...block, suffix: e.target.value })} />
