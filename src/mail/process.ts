@@ -20,6 +20,7 @@ import type { Design } from "./design.js";
 import { insertHtml, insertText, isReplyMessage, latestBodyText } from "./insert.js";
 import { decodeText, findBody, headerBlock, parsePart, spliceBody, type InlineImage, type MimePart } from "./mime.js";
 import { sealProcessed } from "./stamp.js";
+import { journalHeaderNames, journalNote, journalSignedCopy, removeJournalMarker } from "./journal.js";
 import { embedImages } from "./embed.js";
 import { disclaimerSpacer, renderDisclaimer, type DisclaimerStyle } from "./disclaimer.js";
 import type { SignedCopy } from "./sentitems.js";
@@ -482,9 +483,16 @@ export async function processRawMessage(raw: Buffer, envelopeFrom: string, envel
   const embedded = embedImages(snippetHtml);
   const nextHtml = insertHtml(html || `<div>${escapeHtml(text)}</div>`, embedded.html);
   const nextText = insertText(text, renderPlainText(snippetHtml));
-  const composed = splice
-    ? withProcessedHeader(spliceBody(raw, root, bodyParts, nextHtml, nextText, embedded.inline))
-    : withProcessedHeader(await composeRfc822(parsed, nextHtml, nextText, embedded.inline));
+  let rebuilt = splice ? spliceBody(raw, root, bodyParts, nextHtml, nextText, embedded.inline) : await composeRfc822(parsed, nextHtml, nextText, embedded.inline);
+  // Before the stamp, which covers these bytes: see journal.ts.
+  let journal = "";
+  if (journalSignedCopy()) {
+    const seen = journalHeaderNames(rebuilt);
+    const stripped = removeJournalMarker(rebuilt);
+    rebuilt = stripped.raw;
+    journal = journalNote(stripped.removed, seen);
+  }
+  const composed = withProcessedHeader(rebuilt);
   return {
     raw: composed,
     body: { html: nextHtml, text: nextText, inline: embedded.inline },
@@ -492,7 +500,7 @@ export async function processRawMessage(raw: Buffer, envelopeFrom: string, envel
     disclaimerIds: tested.disclaimers.map((d) => d.id),
     campaignIds: tested.campaigns.map((c) => c.id),
     skipped: false,
-    reason: "signed"
+    reason: journal ? `Signed. ${journal}` : "signed"
   };
 }
 

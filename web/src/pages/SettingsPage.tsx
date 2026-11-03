@@ -110,6 +110,7 @@ function MailFlow() {
 
         <div className="space-y-6 xl:sticky xl:top-6">
           <ReturnPathTest />
+          <Journaling />
           <section className="panel p-5 text-sm">
             <h2 className="font-semibold text-base">Before you turn it on</h2>
             <ul className="mt-3 space-y-2.5 text-slate-600 leading-6">
@@ -130,6 +131,49 @@ function MailFlow() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Whether Exchange also journals the signed copy, for archive services such as Global Relay. */
+function Journaling() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    void api.journaling().then((r) => setOn(r.journalSignedCopy));
+  }, []);
+  if (on === null) return null;
+  return (
+    <section className="panel p-5 text-sm">
+      <h2 className="font-semibold text-base">Journaling</h2>
+      <p className="mt-2 text-slate-600 leading-6">
+        Exchange journals a message as it leaves for Signer, so an archive (Global Relay, say) gets it without the signature or
+        disclaimer, and Exchange does not journal the signed copy that comes back.
+      </p>
+      <label className="mt-3 flex items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={on}
+          onChange={async (e) => {
+            setMessage("");
+            try {
+              setOn((await api.saveJournaling(e.target.checked)).journalSignedCopy);
+              setMessage("Saved. It applies to the next message Signer signs.");
+            } catch (err) {
+              setMessage(err instanceof Error ? err.message : String(err));
+            }
+          }}
+        />
+        <span>
+          <strong className="text-ink">Journal the signed copy</strong>
+          <span className="block text-slate-500 leading-5 mt-0.5">
+            Signer removes Exchange&apos;s &quot;already journaled&quot; marker from messages it signs, so Exchange journals the signed copy
+            as well. The archive then holds both: the original and the message as sent. Activity notes whether a marker was found.
+          </span>
+        </span>
+      </label>
+      {message && <p className="mt-2 text-slate-600">{message}</p>}
+    </section>
   );
 }
 
