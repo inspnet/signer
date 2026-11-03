@@ -376,6 +376,33 @@ const UNSAFE_TO_REWRITE = [
   /content-type:\s*multipart\/report/i
 ];
 
+/** What a message Signer will not rewrite is, in an admin's terms. */
+function untouchedReason(match: string): string {
+  if (/text\/calendar/i.test(match)) return "it is a meeting invite or response, and changing it could break the calendar item";
+  if (/multipart\/signed/i.test(match)) return "it is digitally signed (S/MIME), and changing it would break the signature";
+  if (/encrypted|pkcs7-mime/i.test(match)) return "it is encrypted, so its text cannot be changed";
+  if (/multipart\/report/i.test(match)) return "it is a delivery or read report";
+  return `${match} cannot be rebuilt without losing content`;
+}
+
+/**
+ * Why nothing applied, from the rule evaluation: for each enabled signature,
+ * disclaimer and campaign, the first check that failed.
+ */
+export function noMatchReason(details: TestResult["details"]): string {
+  const skipped = details
+    .filter((d) => d.kind !== "domain" && !d.applied)
+    .map((d) => {
+      const failed = d.checks.find((c) => !c.passed);
+      if (!failed || failed.name === "Enabled") return null;
+      return `${d.name} (${d.kind}): ${failed.name}: ${failed.detail}`;
+    })
+    .filter((x): x is string => Boolean(x));
+  if (!skipped.length) return "Nothing applied: no signature, disclaimer or campaign is enabled";
+  const shown = skipped.slice(0, 4).join(". ");
+  return `Nothing applied. ${shown}${skipped.length > 4 ? `. And ${skipped.length - 4} more` : ""}.`;
+}
+
 function unsafeToRewrite(raw: Buffer): string | null {
   // Part headers only. A calendar invite is a nested part, so the top-level
   // block is not enough, but scanning the body would let a sentence in the
@@ -416,7 +443,7 @@ export async function processRawMessage(raw: Buffer, envelopeFrom: string, envel
       disclaimerIds: [],
       campaignIds: [],
       skipped: true,
-      reason: `Passed through untouched: ${unsafe} cannot be rebuilt without losing content`
+      reason: `Passed through untouched: ${untouchedReason(unsafe)} (${unsafe})`
     };
   }
   // Find the body without decoding attachments, so a 100 MB message costs
@@ -475,7 +502,7 @@ export async function processRawMessage(raw: Buffer, envelopeFrom: string, envel
       disclaimerIds: [],
       campaignIds: [],
       skipped: true,
-      reason: outOfScope ? outOfScope.checks[0]!.detail : "No matching signature, campaign, or disclaimer"
+      reason: outOfScope ? outOfScope.checks[0]!.detail : noMatchReason(tested.details)
     };
   }
 

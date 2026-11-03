@@ -67,6 +67,16 @@ export function MailLogTable({ rows, empty }: { rows: MailLogRow[]; empty: strin
                     </td>
                   </tr>
                 )}
+                {!PROBLEM.has(r.status) && r.detail && r.detail !== "signed" && (
+                  <tr>
+                    <td colSpan={5} className="px-3 pb-3 -mt-1">
+                      <div className="rounded-lg bg-mist px-3 py-2 text-xs leading-5 text-slate-600 break-words">
+                        {r.status === "passed-through" && <span className="font-semibold text-slate-700">Why: </span>}
+                        {r.detail}
+                      </div>
+                    </td>
+                  </tr>
+                )}
               </Fragment>
             );
           })}
