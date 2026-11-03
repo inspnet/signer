@@ -107,7 +107,9 @@ export const config = {
      * auto: when the upstream is Microsoft 365, return each sender domain's mail
      * to that domain's own MX. fixed: always UPSTREAM_HOST.
      */
-    routing: (env("UPSTREAM_ROUTING", "auto").toLowerCase() === "fixed" ? "fixed" : "auto") as "auto" | "fixed"
+    routing: (env("UPSTREAM_ROUTING", "auto").toLowerCase() === "fixed" ? "fixed" : "auto") as "auto" | "fixed",
+    /** Wait before trying a temporarily refused signed message once more. */
+    retryDelayMs: envInt("UPSTREAM_RETRY_DELAY_MS", 2000)
   },
   entra: {
     tenantId: env("ENTRA_TENANT_ID"),

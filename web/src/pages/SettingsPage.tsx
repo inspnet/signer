@@ -89,7 +89,7 @@ function MailFlow() {
             <ol className="mt-6 space-y-6">
               {data.microsoft.steps.map((step, i) => (
                 <Step key={step.title} n={i + 1} title={step.title} detail={step.detail}>
-                  <CodeBlock code={step.commands.join("\n")} />
+                  {step.commands.length > 0 && <CodeBlock code={step.commands.join("\n")} />}
                 </Step>
               ))}
             </ol>

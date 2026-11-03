@@ -11,6 +11,7 @@ import { describeFailure, RelayError, sameFailure } from "./explain.js";
 import { noteMailOutcome } from "../alerts/index.js";
 import { messageIdOf, queueSentItemsUpdate } from "../mail/sentitems.js";
 import { resolveIpv4 } from "./ipv4.js";
+import { clientTlsOptions } from "./clientcert.js";
 import { authorizeInbound, InboundRefusal } from "./accept.js";
 import { hasProcessedHeader, hasValidStamp } from "../mail/stamp.js";
 
@@ -61,7 +62,8 @@ export async function relayUpstream(raw: Buffer, envelopeFrom: string, envelopeT
     host,
     port: target.port,
     secure: target.secure,
-    tls: { servername: target.servername || target.host, rejectUnauthorized: target.rejectUnauthorized },
+    // Present Signer's certificate: a certificate-based "Signer receive" connector identifies the tenant by it.
+    tls: { servername: target.servername || target.host, rejectUnauthorized: target.rejectUnauthorized, ...clientTlsOptions() },
     auth: target.auth,
     name: config.smtp.hostname
   });
@@ -203,8 +205,9 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
   } catch (err) {
     return deliverUnsigned(raw, envelopeFrom, envelopeTo, `Signing failed: ${describeFailure(err)}`, err, entry);
   }
+  let firstRefusal: unknown = null;
   try {
-    await relayUpstream(result.raw, envelopeFrom, envelopeTo);
+    firstRefusal = await relayRetryingOnce(result.raw, envelopeFrom, envelopeTo);
   } catch (err) {
     const stage = result.skipped ? "Handing it back failed" : "Signed, but handing it back failed";
     return deliverUnsigned(raw, envelopeFrom, envelopeTo, `${stage}: ${describeFailure(err)}`, err, entry);
@@ -217,8 +220,29 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
     disclaimerIds: result.disclaimerIds,
     campaignIds: result.campaignIds,
     status: result.skipped ? "passed-through" : "signed",
-    detail: result.reason
+    detail: firstRefusal
+      ? `${sentence(result.skipped ? result.reason : "Signed")} Accepted on the second try; the first was refused: ${describeFailure(firstRefusal)}`
+      : result.reason
   });
+}
+
+/**
+ * Hand a message back, trying once more after a temporary (4xx) refusal.
+ * Microsoft 365 sometimes refuses one attempt and takes the next from another
+ * front end; without the second try, fail-open would deliver it unsigned.
+ * Returns the first refusal when the second try succeeded, else null.
+ */
+async function relayRetryingOnce(raw: Buffer, envelopeFrom: string, envelopeTo: string[]): Promise<unknown> {
+  try {
+    await relayUpstream(raw, envelopeFrom, envelopeTo);
+    return null;
+  } catch (err) {
+    const code = err instanceof RelayError ? err.responseCode : undefined;
+    if (!code || code < 400 || code >= 500) throw err;
+    await new Promise((resolve) => setTimeout(resolve, config.upstream.retryDelayMs));
+    await relayUpstream(raw, envelopeFrom, envelopeTo);
+    return err;
+  }
 }
 
 /**
