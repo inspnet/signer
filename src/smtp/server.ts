@@ -221,7 +221,7 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
     campaignIds: result.campaignIds,
     status: result.skipped ? "passed-through" : "signed",
     detail: firstRefusal
-      ? `${sentence(result.skipped ? result.reason : "Signed")} Accepted on the second try; the first was refused: ${describeFailure(firstRefusal)}`
+      ? `${sentence(result.skipped || result.reason !== "signed" ? result.reason : "Signed")} Accepted on the second try; the first was refused: ${describeFailure(firstRefusal)}`
       : result.reason
   });
 }

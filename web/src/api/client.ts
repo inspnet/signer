@@ -301,6 +301,9 @@ export const api = {
   tester: (body: { from: string; to: string; subject?: string; body?: string }) => request("/api/tester", { method: "POST", body: JSON.stringify(body) }),
   sendTest: (body: { from: string; to: string; subject?: string; body?: string }) =>
     request<{ ok: boolean; sentTo: string; signature: string | null }>("/api/tester/send", { method: "POST", body: JSON.stringify(body) }),
+  journaling: () => request<{ journalSignedCopy: boolean }>("/api/journaling"),
+  saveJournaling: (journalSignedCopy: boolean) =>
+    request<{ journalSignedCopy: boolean }>("/api/journaling", { method: "PUT", body: JSON.stringify({ journalSignedCopy }) }),
   mailboxLinks: () => request<{ suggestions: LinkSuggestion[] }>("/api/directory/links"),
   linkMailboxes: (links: Array<{ email: string; primaryEmail: string }>) =>
     request<{ saved: DirectoryPerson[] }>("/api/directory/links", { method: "POST", body: JSON.stringify({ links }) }),

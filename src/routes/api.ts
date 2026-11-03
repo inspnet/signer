@@ -49,6 +49,7 @@ import { DIRECTORY_FIELDS } from "../directory/fields.js";
 import { LinkError, linkMailbox, senderProfile, suggestLinks } from "../directory/links.js";
 import { cleanDisclaimerStyle } from "../mail/disclaimer.js";
 import { clientCertificate } from "../smtp/clientcert.js";
+import { journalSignedCopy, setJournalSignedCopy } from "../mail/journal.js";
 import { syncDirectory } from "../directory/sync.js";
 import { getRangeStatus } from "../smtp/ipranges.js";
 import { composeTestMessage, signatureHtml, testSignature } from "../mail/process.js";
@@ -640,6 +641,21 @@ export function registerApi(app: FastifyInstance): void {
     const body = req.body as { organizationName?: string };
     if (body.organizationName) setSetting("organization_name", body.organizationName);
     return { ok: true };
+  });
+
+  // Journaling: let Exchange journal the signed copy too (see mail/journal.ts).
+  app.get("/api/journaling", async (req, reply) => {
+    if (!requireRole(["admin"], req, reply)) return;
+    return { journalSignedCopy: journalSignedCopy() };
+  });
+
+  app.put("/api/journaling", async (req, reply) => {
+    const admin = requireRole(["admin"], req, reply);
+    if (!admin) return;
+    const enabled = Boolean((req.body as { journalSignedCopy?: unknown } | undefined)?.journalSignedCopy);
+    setJournalSignedCopy(enabled);
+    audit(admin.email, "update_journaling", "", enabled ? "journal the signed copy" : "off");
+    return { journalSignedCopy: journalSignedCopy() };
   });
 
   app.get("/api/mail-flow", async (req, reply) => {

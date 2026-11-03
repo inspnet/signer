@@ -246,7 +246,13 @@ export async function findOriginal(token: string, sender: string, messageId: str
 }
 
 /** The signed copy: the new body and signature images, with the original's envelope and metadata. */
-export function replacementFor(original: Original, copy: SignedCopy, messageId: string): Record<string, unknown> {
+export function replacementFor(
+  original: Original,
+  copy: SignedCopy,
+  messageId: string,
+  /** The original's own inline images (an Outlook signature's logo), so the copy never appears without them. */
+  originalInline: Array<Record<string, unknown>> = []
+): Record<string, unknown> {
   const when = original.sentDateTime ?? new Date().toISOString();
   const conversationIndex = original.singleValueExtendedProperties?.find((p) => p.id.toLowerCase() === CONVERSATION_INDEX.toLowerCase());
   return {
@@ -260,14 +266,17 @@ export function replacementFor(original: Original, copy: SignedCopy, messageId: 
     bccRecipients: original.bccRecipients ?? [],
     replyTo: original.replyTo ?? [],
     isRead: true,
-    attachments: copy.inline.map((img) => ({
-      "@odata.type": "#microsoft.graph.fileAttachment",
-      name: img.filename,
-      contentType: img.contentType,
-      contentBytes: img.content.toString("base64"),
-      isInline: true,
-      contentId: img.cid
-    })),
+    attachments: [
+      ...copy.inline.map((img) => ({
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        name: img.filename,
+        contentType: img.contentType,
+        contentBytes: img.content.toString("base64"),
+        isInline: true,
+        contentId: img.cid
+      })),
+      ...originalInline
+    ],
     singleValueExtendedProperties: [
       // PR_MESSAGE_FLAGS = read, without "unsent": shown as sent, not as a draft.
       { id: "Integer 0x0E07", value: "1" },
@@ -333,20 +342,46 @@ async function uploadLarge(token: string, sender: string, targetMessage: string,
   if (offset !== size) throw new Error(`Uploaded ${offset} of ${size} bytes of ${att.name}`);
 }
 
+/** One small attachment of message `from`, ready to POST to another message. */
+async function fetchAttachment(token: string, sender: string, from: string, att: AttachmentInfo): Promise<Record<string, unknown>> {
+  const full = await graph<Record<string, unknown>>(
+    token,
+    "GET",
+    `${mailbox(sender)}/messages/${encodeURIComponent(from)}/attachments/${encodeURIComponent(att.id)}`
+  );
+  return {
+    "@odata.type": "#microsoft.graph.fileAttachment",
+    name: full.name,
+    contentType: full.contentType,
+    contentBytes: full.contentBytes,
+    isInline: full.isInline,
+    ...(full.contentId ? { contentId: full.contentId } : {})
+  };
+}
+
+/**
+ * The original's inline images that can travel in the request creating the
+ * copy: small ones, together under the size Graph takes in one request.
+ * Outlook shows the copy as soon as it exists, and an inline image added a
+ * moment later stays a broken picture until the message is reopened.
+ */
+function inlineForCreate(attachments: AttachmentInfo[], signerImages: number): AttachmentInfo[] {
+  let budget = UPLOAD_SESSION_FROM - signerImages;
+  const out: AttachmentInfo[] = [];
+  for (const att of attachments) {
+    if (!att.isInline || att.size >= budget) continue;
+    budget -= att.size;
+    out.push(att);
+  }
+  return out;
+}
+
 /** Copies every attachment of `from` onto `to`, both in the sender's mailbox. */
 async function copyAttachments(token: string, sender: string, from: string, to: string, attachments: AttachmentInfo[]): Promise<void> {
   const base = `${mailbox(sender)}/messages`;
   for (const att of attachments) {
     if (att.size < UPLOAD_SESSION_FROM) {
-      const full = await graph<Record<string, unknown>>(token, "GET", `${base}/${encodeURIComponent(from)}/attachments/${encodeURIComponent(att.id)}`);
-      await graph(token, "POST", `${base}/${encodeURIComponent(to)}/attachments`, {
-        "@odata.type": "#microsoft.graph.fileAttachment",
-        name: full.name,
-        contentType: full.contentType,
-        contentBytes: full.contentBytes,
-        isInline: full.isInline,
-        ...(full.contentId ? { contentId: full.contentId } : {})
-      });
+      await graph(token, "POST", `${base}/${encodeURIComponent(to)}/attachments`, await fetchAttachment(token, sender, from, att));
     } else {
       const source = await fetch(`${GRAPH}${base}/${encodeURIComponent(from)}/attachments/${encodeURIComponent(att.id)}/$value`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -375,9 +410,16 @@ async function swap(token: string, sender: string, original: Original, copy: Sig
   const tooBig = attachments.find((a) => a.size > MAX_ATTACHMENT);
   if (tooBig) return `"${tooBig.name}" is over Graph's 150 MB attachment limit; left as sent.`;
 
-  const created = await graph<{ id: string }>(token, "POST", `${mailbox(sender)}/mailFolders/SentItems/messages`, replacementFor(original, copy, messageId));
+  const early = inlineForCreate(attachments, copy.inline.reduce((n, img) => n + img.content.length, 0));
+  const earlyBodies = await Promise.all(early.map((att) => fetchAttachment(token, sender, original.id, att)));
+  const created = await graph<{ id: string }>(
+    token,
+    "POST",
+    `${mailbox(sender)}/mailFolders/SentItems/messages`,
+    replacementFor(original, copy, messageId, earlyBodies)
+  );
   try {
-    await copyAttachments(token, sender, original.id, created.id, attachments);
+    await copyAttachments(token, sender, original.id, created.id, attachments.filter((a) => !early.includes(a)));
   } catch (err) {
     // Undo: the original stays, the half-built copy goes.
     await permanentlyDelete(token, sender, created.id).catch(() => undefined);
