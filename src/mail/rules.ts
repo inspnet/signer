@@ -58,7 +58,12 @@ function matchesSender(rule: SenderRule | undefined, ctx: RuleContext): { passed
   if (rule.groups?.some((g) => ctx.sender.groupIds.includes(g))) {
     return { passed: true, detail: "Sender group matched", applicable: true };
   }
-  return { passed: false, detail: "Sender did not match", applicable: true };
+  const wanted = [
+    rule.domains?.length ? `domain ${rule.domains.map((d) => d.replace(/^@/, "")).join(", ")}` : "",
+    rule.groups?.length ? `${rule.groups.length} group${rule.groups.length === 1 ? "" : "s"}` : "",
+    rule.emails?.length ? `${rule.emails.length} address${rule.emails.length === 1 ? "" : "es"}` : ""
+  ].filter(Boolean);
+  return { passed: false, detail: `${email || "The sender"} is not among the senders (${wanted.join("; ")})`, applicable: true };
 }
 
 function matchesRecipients(rule: RecipientRule | undefined, ctx: RuleContext): { passed: boolean; detail: string; applicable: boolean } {
@@ -88,7 +93,14 @@ function matchesRecipients(rule: RecipientRule | undefined, ctx: RuleContext): {
 
   if (!checks.length) return { passed: true, detail: "Any recipient", applicable: false };
   const passed = checks.some(Boolean);
-  return { passed, detail: passed ? "Recipient conditions met" : "Recipient conditions not met", applicable: true };
+  if (passed) return { passed, detail: "Recipient conditions met", applicable: true };
+  const missing = [
+    rule.internal ? "not every recipient is internal" : "",
+    rule.external ? "no recipient is external (all are on your domains)" : "",
+    rule.emails?.length ? "no recipient is on the address list" : "",
+    rule.domains?.length ? `no recipient is at ${rule.domains.map((d) => d.replace(/^@/, "")).join(", ")}` : ""
+  ].filter(Boolean);
+  return { passed, detail: missing.join("; ") || "Recipient conditions not met", applicable: true };
 }
 
 const WEEKDAY_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
