@@ -235,6 +235,26 @@ describe("Sent Items update", () => {
     expect(deleted).toEqual(["AAMk-original"]);
   });
 
+  it("creates the copy with the original's inline images already on it, so Outlook never shows a broken logo", async () => {
+    originalVisibleAfter = 0;
+    const logo = { ...fileAtt("a1", "image.png", Buffer.from("OUTLOOKLOGO")), contentType: "image/png", isInline: true, contentId: "70accb19-8593" };
+    attachments = [logo, fileAtt("a2", "notes.txt", Buffer.from("small file"))];
+    queue();
+    await run(20_000);
+
+    const body = created()!.body as { attachments: Array<Record<string, unknown>> };
+    expect(body.attachments.map((a) => a.name)).toEqual(["logo.png", "image.png"]);
+    expect(body.attachments[1]).toMatchObject({
+      contentBytes: Buffer.from("OUTLOOKLOGO").toString("base64"),
+      isInline: true,
+      contentId: "70accb19-8593"
+    });
+    // Only the ordinary attachment is added afterwards.
+    const after = calls.filter((c) => c.method === "POST" && c.url.endsWith("/messages/AAMk-signed/attachments"));
+    expect(after.map((c) => (c.body as { name: string }).name)).toEqual(["notes.txt"]);
+    expect(deleted).toEqual(["AAMk-original"]);
+  });
+
   it("rolls back when an attachment cannot be copied: the signed copy goes, the original stays", async () => {
     originalVisibleAfter = 0;
     uploadSessionStatus = 400;
