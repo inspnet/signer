@@ -48,6 +48,7 @@ import {
 import { DIRECTORY_FIELDS } from "../directory/fields.js";
 import { LinkError, linkMailbox, senderProfile, suggestLinks } from "../directory/links.js";
 import { cleanDisclaimerStyle } from "../mail/disclaimer.js";
+import { clientCertificate } from "../smtp/clientcert.js";
 import { syncDirectory } from "../directory/sync.js";
 import { getRangeStatus } from "../smtp/ipranges.js";
 import { composeTestMessage, signatureHtml, testSignature } from "../mail/process.js";
@@ -659,8 +660,17 @@ export function registerApi(app: FastifyInstance): void {
       rule: `New-TransportRule -Name "${rule}" -FromScope InOrganization -ExceptIfHeaderContainsMessageHeader $header -ExceptIfHeaderContainsWords "true" -RouteMessageOutboundConnector "Signer send" -Enabled $false`,
       pilot: [`Set-TransportRule -Identity "${rule}" -From "pilot.user@yourdomain.com"`, `Enable-TransportRule -Identity "${rule}"`],
       live: `Set-TransportRule -Identity "${rule}" -From $null`,
-      rollback: `Disable-TransportRule -Identity "${rule}" -Confirm:$false`
+      rollback: `Disable-TransportRule -Identity "${rule}" -Confirm:$false`,
+      byCertificate: `Set-InboundConnector -Identity "Signer receive" -TlsSenderCertificateName ${host} -RequireTls $true`,
+      byIp: `Set-InboundConnector -Identity "Signer receive" -TlsSenderCertificateName $null -SenderIPAddresses $signerIp`
     };
+    // A certificate-based "Signer receive" needs the certificate Signer presents to allow client authentication.
+    const cert = clientCertificate();
+    const certificateStep = !cert
+      ? `This server has no certificate to present (TLS_CERT_PATH / TLS_KEY_PATH), so keep identifying Signer by IP address.`
+      : cert.clientAuth
+        ? `Optional. Identifying Signer by its certificate (${cert.subject || host}) lets Exchange place every message in your tenant, including out-of-office replies and read receipts, which have no sender address and are otherwise refused with 4.4.62. Run the return-path test after switching; the second command switches back.`
+        : `Not available yet: Signer's certificate (${cert.subject || host}, from ${cert.issuer || "its issuer"}) does not allow client authentication, so Microsoft 365 cannot identify Signer by it. Keep identifying Signer by IP address.`;
     const isGoogle = /(^|\.)gmail\.com$|google/i.test(config.upstream.host);
     return {
       publicIp: ip,
@@ -714,6 +724,11 @@ export function registerApi(app: FastifyInstance): void {
             title: "Inbound connector: Signer → Microsoft 365",
             detail: `Recognises this server by ${signerIp}, so Exchange relays signed mail on to outside recipients. If PowerShell warns that it was created disabled, Microsoft support has to enable it.`,
             commands: [ps.signerIp, ps.inbound]
+          },
+          {
+            title: "Identify Signer by certificate (optional)",
+            detail: certificateStep,
+            commands: cert?.clientAuth ? [ps.byCertificate, `# To switch back to the IP address:`, ps.signerIp, ps.byIp] : []
           },
           {
             title: "Transport rule, created off",

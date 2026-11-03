@@ -38,6 +38,18 @@ export function relayHint(err: unknown, target: Pick<RelayTarget, "host" | "port
       "is of type On-premises, and lists this server's public IPv4 address (Settings → Connectors shows it)."
     );
   }
+  if (/4\.4\.62|ATTR35|wrong Office 365 region/i.test(text)) {
+    // Checked before the certificate hints: the response says "EmptyCertificate", which is not a TLS problem.
+    const empty = /EmptyCertificate/i.test(text);
+    return (
+      "Microsoft 365 could not tell which tenant the message belongs to. With \"Signer receive\" identifying Signer by IP address, " +
+      "Exchange works that out from the sender's domain, so this happens to messages with an empty sender (out-of-office replies, read receipts) " +
+      "and to senders whose domain is not an accepted domain in the tenant. " +
+      (empty
+        ? "Microsoft also saw no certificate from Signer. If \"Signer receive\" is set to identify Signer by certificate, switch it back to the IP address option until the return-path test (Settings → Connectors) shows Signer's certificate allows client authentication."
+        : "If it keeps happening for ordinary senders, check the sender's domain is an accepted domain and that \"Signer receive\" lists this server's public IPv4.")
+    );
+  }
   if (/5\.7\.(60[6-9]|6[0-4]\d)|banned sending IP|blocked using/i.test(text)) {
     return (
       "Microsoft 365 is refusing this server's IP address as a sender. Delist it at https://sender.office.com, " +

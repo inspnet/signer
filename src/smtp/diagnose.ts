@@ -3,6 +3,7 @@ import net from "node:net";
 import tls from "node:tls";
 import { config } from "../config.js";
 import { relayHint } from "./explain.js";
+import { clientCertificate, clientTlsOptions } from "./clientcert.js";
 import { relayTargetFor, type MxLookup, type RelayTarget } from "./route.js";
 
 /**
@@ -116,7 +117,13 @@ class SmtpLine {
 function connectTcp(host: string, address: string, port: number, timeoutMs: number, secure: boolean, target: RelayTarget) {
   return new Promise<net.Socket>((resolve, reject) => {
     const socket = secure
-      ? tls.connect({ host: address, port, servername: net.isIP(target.servername) ? undefined : target.servername, rejectUnauthorized: target.rejectUnauthorized })
+      ? tls.connect({
+          host: address,
+          port,
+          servername: net.isIP(target.servername) ? undefined : target.servername,
+          rejectUnauthorized: target.rejectUnauthorized,
+          ...clientTlsOptions()
+        })
       : net.connect({ host: address, port });
     const timer = setTimeout(() => {
       socket.destroy();
@@ -135,7 +142,12 @@ function connectTcp(host: string, address: string, port: number, timeoutMs: numb
 
 function upgrade(socket: net.Socket, target: RelayTarget, timeoutMs: number) {
   return new Promise<tls.TLSSocket>((resolve, reject) => {
-    const secure = tls.connect({ socket, servername: net.isIP(target.servername) ? undefined : target.servername, rejectUnauthorized: target.rejectUnauthorized });
+    const secure = tls.connect({
+      socket,
+      servername: net.isIP(target.servername) ? undefined : target.servername,
+      rejectUnauthorized: target.rejectUnauthorized,
+      ...clientTlsOptions()
+    });
     const timer = setTimeout(() => {
       secure.destroy();
       reject(Object.assign(new Error("TLS handshake timed out"), { code: "ETIMEDOUT" }));
@@ -149,6 +161,34 @@ function upgrade(socket: net.Socket, target: RelayTarget, timeoutMs: number) {
       reject(err);
     });
   });
+}
+
+/** The certificate Signer presented, and whether a certificate-based connector can use it. */
+export function presentedCertificateStep(): DiagnosticStep {
+  const c = clientCertificate();
+  if (!c) {
+    return {
+      step: "Signer's certificate",
+      status: "warn",
+      detail:
+        "None presented (TLS_CERT_PATH / TLS_KEY_PATH are not set or not readable). A \"Signer receive\" connector that identifies Signer by IP address still works; one that goes by certificate does not.",
+      ms: 0
+    };
+  }
+  const who = `${c.subject || c.names[0] || "certificate"}${c.issuer ? ` from ${c.issuer}` : ""}, valid until ${c.validTo.slice(0, 10)}`;
+  return c.clientAuth
+    ? {
+        step: "Signer's certificate",
+        status: "ok",
+        detail: `Presented ${who}. It allows client authentication, so "Signer receive" can identify Signer by certificate (${c.subject || c.names[0]}).`,
+        ms: 0
+      }
+    : {
+        step: "Signer's certificate",
+        status: "warn",
+        detail: `Presented ${who}, but it is for servers only (no client authentication), so Microsoft 365 cannot identify Signer by it. Keep "Signer receive" on the IP address option, or use a certificate that allows client authentication.`,
+        ms: 0
+      };
 }
 
 function describeCertificate(socket: tls.TLSSocket): string {
@@ -251,6 +291,7 @@ export async function diagnoseRelay(options: DiagnoseOptions): Promise<RelayDiag
           return { value: upgraded, detail: describeCertificate(upgraded) };
         });
         line.attach(secured);
+        if (microsoft) steps.push(presentedCertificateStep());
         ehlo = await run("EHLO over TLS", async () => {
           const reply = await line.read(`EHLO ${config.smtp.hostname}`);
           expect(reply, (c) => c === 250, "EHLO refused");
