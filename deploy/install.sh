@@ -39,6 +39,7 @@ SVC_USER=signer
 NODE_MAJOR=22
 DNS_MODE="${SIGNER_DNS:-cloudflare}"
 RESOLVED_DROPIN=/etc/systemd/resolved.conf.d/signer-dns.conf
+NETWORKD_DIR=/etc/systemd/network
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
@@ -416,9 +417,48 @@ EOF
 # What the Entra app registration needs. One app does sign-in and directory sync.
 # Every message from your domains is DMARC-checked, which means SPF lookups;
 # a resolver that times out now and then defers real mail. Cloudflare's
-# resolvers (Quad9 as fallback) for every lookup, through systemd-resolved, in
-# a file of its own that Linode's Network Helper does not rewrite. If DNS stops
-# working with them (a host that blocks outside resolvers), the change is undone.
+# resolvers (Quad9 as fallback) for every lookup, through systemd-resolved.
+# A global DNS= alone is not enough: an interface marked as a DNS default
+# route (eth0, with the resolvers DHCP or Network Helper gave it) is asked
+# too, and the closer one usually answers first. So those interfaces stop
+# being a DNS default route, at once with resolvectl and, so it lasts past a
+# reboot, in a systemd-networkd drop-in next to their .network file (which
+# Network Helper rewrites; the drop-in it leaves alone). If DNS stops working
+# (a host that blocks outside resolvers), all of it is undone.
+
+# Interfaces that carry a default route.
+dns_links() {
+  { ip -o route show default 2> /dev/null; ip -6 -o route show default 2> /dev/null; } |
+    awk '{ for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1) }' | sort -u
+}
+
+# Make each default-route interface a DNS default route again, or not ("yes"/"no").
+link_default_route() {
+  local link file
+  for link in $(dns_links); do
+    resolvectl default-route "$link" "$1" 2> /dev/null || true
+    [ "$1" = "no" ] || continue
+    file="$(networkctl status "$link" 2> /dev/null | awk -F': ' '/Network File:/ { print $2; exit }')"
+    case "$file" in
+      /*.network)
+        mkdir -p "$NETWORKD_DIR/$(basename "$file").d"
+        printf '%s\n' "# Written by the Signer installer: DNS lookups use the global resolvers." "[Network]" "DNSDefaultRoute=no" \
+          > "$NETWORKD_DIR/$(basename "$file").d/signer-dns.conf"
+        ;;
+      *) note "$link is not managed by systemd-networkd; its DNS setting lasts until the next reboot." ;;
+    esac
+  done
+}
+
+remove_link_dropins() {
+  local f
+  for f in "$NETWORKD_DIR"/*.network.d/signer-dns.conf; do
+    [ -f "$f" ] || continue
+    rm -f "$f"
+    rmdir "$(dirname "$f")" 2> /dev/null || true
+  done
+}
+
 configure_dns() {
   if ! systemctl is-active --quiet systemd-resolved; then
     note "systemd-resolved is not running; DNS left as it is."
@@ -429,6 +469,8 @@ configure_dns() {
       rm -f "$RESOLVED_DROPIN"
       systemctl restart systemd-resolved
     fi
+    remove_link_dropins
+    link_default_route yes
     note "Using the host's own DNS resolvers (SIGNER_DNS=system)."
     return
   fi
@@ -444,11 +486,14 @@ Domains=~."
     printf '%s\n' "$wanted" > "$RESOLVED_DROPIN"
     systemctl restart systemd-resolved
   fi
+  link_default_route no
   if getent ahostsv4 github.com > /dev/null && getent ahostsv4 login.microsoftonline.com > /dev/null; then
     note "Cloudflare (1.1.1.1, 1.0.0.1), with Quad9 as fallback."
   else
     rm -f "$RESOLVED_DROPIN"
+    remove_link_dropins
     systemctl restart systemd-resolved
+    link_default_route yes
     warn "DNS did not work through Cloudflare or Quad9 (outside resolvers blocked?); kept the host's own resolvers."
   fi
 }
