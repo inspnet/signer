@@ -38,7 +38,9 @@ const serverOnly = certificate("server-only", "serverAuth");
 const both = certificate("both", "serverAuth,clientAuth");
 
 const signerPort = await freePort();
-const upstreamPort = await freePort();
+// Each probe closes before the next, so the OS can hand out the same port twice.
+let upstreamPort = await freePort();
+while (upstreamPort === signerPort) upstreamPort = await freePort();
 process.env.DATABASE_PATH = path.join(tmp, "returnpath.db");
 process.env.DATA_DIR = tmp;
 process.env.DEMO_MODE = "true";
