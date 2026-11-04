@@ -12,6 +12,7 @@ import { noteMailOutcome } from "../alerts/index.js";
 import { messageIdOf, queueSentItemsUpdate } from "../mail/sentitems.js";
 import { resolveIpv4 } from "./ipv4.js";
 import { clientTlsOptions } from "./clientcert.js";
+import { emptySenderNote, returnSenderFor } from "./nullsender.js";
 import { authorizeInbound, InboundRefusal } from "./accept.js";
 import { hasProcessedHeader, hasValidStamp } from "../mail/stamp.js";
 
@@ -160,6 +161,10 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
   const started = Date.now();
   const envelopeFrom = session.envelope.mailFrom ? session.envelope.mailFrom.address : "";
   const envelopeTo = session.envelope.rcptTo.map((r) => r.address);
+  // Empty-sender mail goes back with its From address as sender: see nullsender.ts.
+  const returnFrom = envelopeFrom || returnSenderFor(raw);
+  const senderNote = returnFrom !== envelopeFrom ? emptySenderNote(returnFrom) : "";
+  const withNote = (detail?: string) => [detail, senderNote].filter(Boolean).join(" ") || undefined;
   const entry = () => ({
     messageId: "",
     sender: envelopeFrom,
@@ -173,13 +178,13 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
 
   if (hasValidStamp(raw)) {
     try {
-      await relayUpstream(raw, envelopeFrom, envelopeTo);
+      await relayUpstream(raw, returnFrom, envelopeTo);
     } catch (err) {
       const detail = `${sentence(`Already signed, but handing it back failed: ${describeFailure(err)}`)} ${RETRY}`;
-      record({ ...entry(), status: "deferred", detail });
+      record({ ...entry(), status: "deferred", detail: withNote(detail) });
       throw err;
     }
-    record({ ...entry(), status: "loop-prevented" });
+    record({ ...entry(), status: "loop-prevented", detail: withNote() });
     return;
   }
 
@@ -203,14 +208,14 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
   try {
     result = await processRawMessage(raw, envelopeFrom, envelopeTo);
   } catch (err) {
-    return deliverUnsigned(raw, envelopeFrom, envelopeTo, `Signing failed: ${describeFailure(err)}`, err, entry);
+    return deliverUnsigned(raw, returnFrom, envelopeTo, `Signing failed: ${describeFailure(err)}`, err, entry, senderNote);
   }
   let firstRefusal: unknown = null;
   try {
-    firstRefusal = await relayRetryingOnce(result.raw, envelopeFrom, envelopeTo);
+    firstRefusal = await relayRetryingOnce(result.raw, returnFrom, envelopeTo);
   } catch (err) {
     const stage = result.skipped ? "Handing it back failed" : "Signed, but handing it back failed";
-    return deliverUnsigned(raw, envelopeFrom, envelopeTo, `${stage}: ${describeFailure(err)}`, err, entry);
+    return deliverUnsigned(raw, returnFrom, envelopeTo, `${stage}: ${describeFailure(err)}`, err, entry, senderNote);
   }
   // Swap the unsigned copy in the sender's Sent Items for this one (when turned on).
   if (!result.skipped && result.body) queueSentItemsUpdate(envelopeFrom, envelopeTo, messageIdOf(result.raw), result.body);
@@ -220,9 +225,13 @@ async function handleMessage(raw: Buffer, session: SMTPServerSession): Promise<v
     disclaimerIds: result.disclaimerIds,
     campaignIds: result.campaignIds,
     status: result.skipped ? "passed-through" : "signed",
-    detail: firstRefusal
-      ? `${sentence(result.skipped || result.reason !== "signed" ? result.reason : "Signed")} Accepted on the second try; the first was refused: ${describeFailure(firstRefusal)}`
-      : result.reason
+    detail: withNote(
+      firstRefusal
+        ? `${sentence(result.skipped || result.reason !== "signed" ? result.reason : "Signed")} Accepted on the second try; the first was refused: ${describeFailure(firstRefusal)}`
+        : senderNote && result.reason === "signed"
+          ? "Signed."
+          : result.reason
+    )
   });
 }
 
@@ -256,10 +265,11 @@ async function deliverUnsigned(
   envelopeTo: string[],
   why: string,
   cause: unknown,
-  entry: () => Omit<Parameters<typeof logMail>[0], "status">
+  entry: () => Omit<Parameters<typeof logMail>[0], "status">,
+  note = ""
 ): Promise<void> {
   if (config.failureMode !== "fail-open") {
-    record({ ...entry(), status: "deferred", detail: `${sentence(why)} Not delivered (FAILURE_MODE=fail-closed). ${RETRY}` });
+    record({ ...entry(), status: "deferred", detail: [`${sentence(why)} Not delivered (FAILURE_MODE=fail-closed). ${RETRY}`, note].filter(Boolean).join(" ") });
     throw cause;
   }
   try {
@@ -268,10 +278,10 @@ async function deliverUnsigned(
     const again = sameFailure(cause, relayErr)
       ? "Sending it unsigned failed the same way."
       : sentence(`Sending it unsigned also failed: ${describeFailure(relayErr)}`);
-    record({ ...entry(), status: "deferred", detail: `${sentence(why)} ${again} ${RETRY}` });
+    record({ ...entry(), status: "deferred", detail: [`${sentence(why)} ${again} ${RETRY}`, note].filter(Boolean).join(" ") });
     throw relayErr;
   }
-  record({ ...entry(), status: "error", detail: `${sentence(why)} Delivered without a signature (FAILURE_MODE=fail-open).` });
+  record({ ...entry(), status: "error", detail: [`${sentence(why)} Delivered without a signature (FAILURE_MODE=fail-open).`, note].filter(Boolean).join(" ") });
 }
 
 export async function startSmtp(): Promise<SMTPServer[]> {
