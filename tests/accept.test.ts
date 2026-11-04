@@ -66,6 +66,34 @@ describe("inbound acceptance", () => {
     });
   });
 
+  it("checks again after an SPF DNS hiccup, and accepts when it then passes", async () => {
+    // As in a real bounce: DMARC "fail" only because SPF's DNS lookup failed for the moment.
+    const answers = [
+      { result: "fail", spf: "temperror", dkim: "none" },
+      { result: "pass", spf: "pass", dkim: "none" }
+    ];
+    let calls = 0;
+    const result = await authorizeInbound(message("ada@example.com"), conn, async () => answers[calls++]!, 5);
+    expect(calls).toBe(2);
+    expect(result).toEqual({ domain: "example.com", listed: true });
+  });
+
+  it("defers with 451, not a bounce, when SPF still cannot be checked", async () => {
+    let calls = 0;
+    await expect(
+      authorizeInbound(message("ada@example.com"), conn, async () => (calls++, { result: "fail", spf: "temperror", dkim: "none" }), 5)
+    ).rejects.toMatchObject({ responseCode: 451, message: expect.stringContaining("Temporary DNS failure checking DMARC") });
+    expect(calls).toBe(2);
+  });
+
+  it("refuses a real DMARC failure straight away", async () => {
+    let calls = 0;
+    await expect(
+      authorizeInbound(message("ada@example.com"), conn, async () => (calls++, { result: "fail", spf: "fail", dkim: "none" }), 5)
+    ).rejects.toMatchObject({ responseCode: 550 });
+    expect(calls).toBe(1);
+  });
+
   it("does not query DMARC in demo mode", async () => {
     config.demoMode = true;
     const result = await authorizeInbound(message("ada@example.com"), conn, async () => {
