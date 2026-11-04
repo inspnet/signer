@@ -145,3 +145,30 @@ describe("quoted-printable", () => {
     expect(parsed.text).toBe(text);
   });
 });
+
+describe("character sets", () => {
+  // Outlook sometimes sends ISO-2022-JP: a curly apostrophe is ESC $ B ! G ESC ( B.
+  const jis = (body: string) =>
+    Buffer.from(
+      ["From: Scott <scott@inspired.co>", "To: ada@contoso.com", "Subject: Hi", 'Content-Type: text/plain; charset="iso-2022-jp"', "Content-Transfer-Encoding: 7bit", "", body, ""].join("\r\n"),
+      "latin1"
+    );
+
+  it("decodes ISO-2022-JP instead of leaving its escape codes in the text", () => {
+    const raw = jis("Let\x1b$B!G\x1b(Bs connect.");
+    const root = parsePart(raw, 0, raw.length);
+    const body = findBody(root);
+    expect(decodeText(raw, body.text!)).toBe("Let’s connect.\r\n");
+  });
+
+  it("keeps the apostrophe when the body is rewritten as UTF-8", async () => {
+    const raw = jis("Let\x1b$B!G\x1b(Bs connect.");
+    const root = parsePart(raw, 0, raw.length);
+    const parts = findBody(root);
+    const text = decodeText(raw, parts.text!);
+    const out = spliceBody(raw, root, parts, "", `${text}\r\n-- \r\nScott`, []);
+    const parsed = await simpleParser(out);
+    expect(parsed.text).toContain("Let’s connect.");
+    expect(parsed.text).not.toContain("$B");
+  });
+});

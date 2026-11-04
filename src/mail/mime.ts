@@ -180,8 +180,24 @@ function decodeTransfer(raw: Buffer, encoding: string): Buffer {
 
 export function decodeText(buf: Buffer, part: MimePart): string {
   const bytes = decodeTransfer(buf.subarray(part.bodyStart, part.end), part.encoding);
-  const charset = (part.params.charset || "utf-8").toLowerCase();
-  return iconv.encodingExists(charset) ? iconv.decode(bytes, charset) : bytes.toString("utf8");
+  return decodeCharset(bytes, part.params.charset || "utf-8");
+}
+
+/**
+ * Text in the part's character set. TextDecoder first: it knows every
+ * charset mail clients and browsers use, including stateful ones such as
+ * ISO-2022-JP, which Outlook sometimes picks and iconv-lite cannot decode
+ * (its escape sequences then showed up in the text, "Let$B!G(Bs"). iconv-lite
+ * covers what TextDecoder does not; UTF-8 is the last resort.
+ */
+export function decodeCharset(bytes: Buffer, charset: string): string {
+  const label = charset.trim().replace(/^["']|["']$/g, "").toLowerCase();
+  try {
+    return new TextDecoder(label).decode(bytes);
+  } catch {
+    // An unknown label: TextDecoder throws a RangeError.
+  }
+  return iconv.encodingExists(label) ? iconv.decode(bytes, label) : bytes.toString("utf8");
 }
 
 /** Quoted-printable (RFC 2045) of UTF-8 text: readable, and 76-character lines. */
