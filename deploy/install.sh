@@ -16,6 +16,7 @@
 # first run: SIGNER_DOMAIN, SIGNER_ADMIN_EMAIL, SIGNER_PRIMARY_DOMAIN,
 # SIGNER_PROVIDER (microsoft or google), SIGNER_UPSTREAM_HOST. SIGNER_BRANCH
 # picks a branch (default main; an update stays on the branch already installed).
+# SIGNER_DNS=system keeps the host's own DNS resolvers instead of Cloudflare's.
 #
 # Layout:
 #   /opt/signer               the code (a git checkout; local edits are discarded on update)
@@ -36,6 +37,8 @@ NPM_CACHE=/var/cache/signer-npm
 WEBROOT=/var/www/letsencrypt
 SVC_USER=signer
 NODE_MAJOR=22
+DNS_MODE="${SIGNER_DNS:-cloudflare}"
+RESOLVED_DROPIN=/etc/systemd/resolved.conf.d/signer-dns.conf
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
@@ -201,6 +204,10 @@ main() {
     grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
     note "Added 2 GB of swap for builds."
   fi
+
+  # ------------------------------------------------------------------------
+  say "DNS"
+  configure_dns
 
   # ------------------------------------------------------------------------
   say "Node.js ${NODE_MAJOR}"
@@ -407,6 +414,45 @@ EOF
 }
 
 # What the Entra app registration needs. One app does sign-in and directory sync.
+# Every message from your domains is DMARC-checked, which means SPF lookups;
+# a resolver that times out now and then defers real mail. Cloudflare's
+# resolvers (Quad9 as fallback) for every lookup, through systemd-resolved, in
+# a file of its own that Linode's Network Helper does not rewrite. If DNS stops
+# working with them (a host that blocks outside resolvers), the change is undone.
+configure_dns() {
+  if ! systemctl is-active --quiet systemd-resolved; then
+    note "systemd-resolved is not running; DNS left as it is."
+    return
+  fi
+  if [ "$DNS_MODE" = "system" ]; then
+    if [ -f "$RESOLVED_DROPIN" ]; then
+      rm -f "$RESOLVED_DROPIN"
+      systemctl restart systemd-resolved
+    fi
+    note "Using the host's own DNS resolvers (SIGNER_DNS=system)."
+    return
+  fi
+  local wanted
+  wanted="# Written by the Signer installer. SIGNER_DNS=system removes it.
+[Resolve]
+DNS=1.1.1.1 1.0.0.1 2606:4700:4700::1111 2606:4700:4700::1001
+FallbackDNS=9.9.9.9 149.112.112.112 2620:fe::fe 2620:fe::9
+# Every lookup goes to the servers above, not to the per-interface ones from DHCP.
+Domains=~."
+  if [ "$(cat "$RESOLVED_DROPIN" 2> /dev/null)" != "$wanted" ]; then
+    mkdir -p "$(dirname "$RESOLVED_DROPIN")"
+    printf '%s\n' "$wanted" > "$RESOLVED_DROPIN"
+    systemctl restart systemd-resolved
+  fi
+  if getent ahostsv4 github.com > /dev/null && getent ahostsv4 login.microsoftonline.com > /dev/null; then
+    note "Cloudflare (1.1.1.1, 1.0.0.1), with Quad9 as fallback."
+  else
+    rm -f "$RESOLVED_DROPIN"
+    systemctl restart systemd-resolved
+    warn "DNS did not work through Cloudflare or Quad9 (outside resolvers blocked?); kept the host's own resolvers."
+  fi
+}
+
 entra_instructions() {
   note "Portal sign-in and directory sync use one Entra app registration. In Entra admin center →"
   note "App registrations → New registration (single tenant), set:"

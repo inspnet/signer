@@ -23,6 +23,18 @@ export type DmarcCheck = (
 
 const TEMPORARY = new Set(["temperror", "temperr"]);
 
+/** Wait before checking again when a DNS lookup failed for the moment. */
+export const DMARC_RECHECK_MS = 1000;
+
+/**
+ * A DNS lookup that failed for the moment (SPF or DKIM "temperror") leaves
+ * DMARC unable to pass, so DMARC reports a fail that is not one. Mail Exchange
+ * routes to Signer is not DKIM-signed, so SPF is all DMARC has to go on, and
+ * one DNS hiccup on this server used to bounce a real message.
+ */
+const unsure = (o: DmarcOutcome) =>
+  [o.result, o.spf, o.dkim].some((r) => TEMPORARY.has(String(r ?? "").toLowerCase()));
+
 function clientIp(ip: string): string {
   try {
     return ipaddr.process(ip).toString();
@@ -100,7 +112,8 @@ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
 export async function authorizeInbound(
   raw: Buffer,
   conn: { ip: string; helo: string; sender: string },
-  check: DmarcCheck = checkDmarc
+  check: DmarcCheck = checkDmarc,
+  recheckMs = DMARC_RECHECK_MS
 ): Promise<{ domain: string; listed: boolean }> {
   const domains = await fromDomains(raw);
   if (!domains.length) throw new InboundRefusal("Message has no From address", false);
@@ -110,19 +123,27 @@ export async function authorizeInbound(
   if (config.demoMode) return { domain, listed: true };
 
   const ip = clientIp(conn.ip);
-  let outcome: DmarcOutcome;
-  try {
-    outcome = await check(raw, { ...conn, ip });
-  } catch (err) {
-    const why = err instanceof Error ? err.message : String(err);
-    throw new InboundRefusal(`Temporary DMARC failure for ${domain} (${why})`, true);
+  const run = async (): Promise<DmarcOutcome> => {
+    try {
+      return await check(raw, { ...conn, ip });
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      throw new InboundRefusal(`Temporary DMARC failure for ${domain} (${why})`, true);
+    }
+  };
+  let outcome = await run();
+  // One more look before deciding, as a DNS blip is usually gone a second later.
+  if ((outcome.result || "").toLowerCase() !== "pass" && unsure(outcome)) {
+    await new Promise((resolve) => setTimeout(resolve, recheckMs));
+    outcome = await run();
   }
   const result = (outcome.result || "none").toLowerCase();
   if (result === "pass") return { domain, listed: true };
   const via = [outcome.spf && `spf=${outcome.spf}`, outcome.dkim && `dkim=${outcome.dkim}`].filter(Boolean).join(", ");
   const suffix = via ? ` (${via})` : "";
-  if (TEMPORARY.has(result)) {
-    throw new InboundRefusal(`Temporary DMARC failure for ${domain}${suffix}`, true);
+  if (unsure(outcome)) {
+    // 451: Microsoft 365 keeps the message and retries, instead of bouncing it.
+    throw new InboundRefusal(`Temporary DNS failure checking DMARC for ${domain}${suffix}; Microsoft 365 will retry`, true);
   }
   if (result === "none") {
     throw new InboundRefusal(`Sender domain ${domain} has no passing DMARC result${suffix}`, false);

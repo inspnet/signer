@@ -84,6 +84,7 @@ The script installs and configures:
 - **Log retention**: the system journal, which holds Signer's request log, keeps 14 days ([PRIVACY.md](PRIVACY.md)).
 - **The updater** behind the portal's **Settings → Updates** tab, so an owner can install new versions from the browser.
 - Automatic Ubuntu security updates, and swap on small servers so builds don't run out of memory.
+- **DNS through Cloudflare** (1.1.1.1, with Quad9 as fallback) via `systemd-resolved`. Every message from your domains is DMARC-checked, so a flaky resolver defers real mail. The setting lives in `/etc/systemd/resolved.conf.d/signer-dns.conf`, which Linode's Network Helper leaves alone. If DNS doesn't work through Cloudflare, the installer keeps the host's resolvers; `SIGNER_DNS=system` opts out.
 
 Running the same script again also **updates** Signer, and keeps your configuration. See [Updating an existing install](#updating-an-existing-install).
 
@@ -599,7 +600,7 @@ Each domain in a Microsoft 365 tenant has its own Exchange Online endpoint, publ
 A message has to clear two gates before Signer touches it:
 
 1. **The connection comes from your provider.** Only hosts in `SMTP_ALLOWED_CIDRS` may connect; anyone else is answered `554 Relay access denied`. The installer sets this to `microsoft` or `google` (see [Provider IP ranges](#provider-ip-ranges)). Without it, anyone who can reach port 25 could replay a genuine, DKIM-signed message from your domain and have it relayed through your tenant's trusted connector.
-2. **A listed sender domain passes DMARC.** When the From domain is listed under **Settings → Domains**, DMARC must pass for it (SPF or DKIM aligns, and a DMARC record exists). A temporary DNS failure is answered with `451` so the provider retries. A failure is answered `550`: the sender gets a bounce, Activity shows the message as **Refused** with the reason, and an alert goes out (**Settings → Alerts**).
+2. **A listed sender domain passes DMARC.** When the From domain is listed under **Settings → Domains**, DMARC must pass for it (SPF or DKIM aligns, and a DMARC record exists). A temporary DNS failure, in DMARC itself or in its SPF or DKIM lookup (`spf=temperror`), is checked once more a second later and, if it persists, answered with `451` so the provider retries. Mail Exchange routes to Signer is not DKIM-signed, so SPF is all DMARC can pass on, and a DNS hiccup must not bounce it. A real failure is answered `550`: the sender gets a bounce, Activity shows the message as **Refused** with the reason, and an alert goes out (**Settings → Alerts**).
 
 Mail from a domain that is not listed passes through unsigned, as before. That covers automatic mail such as out-of-office replies and read receipts, and any domain you have not added yet.
 
