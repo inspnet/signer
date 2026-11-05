@@ -84,7 +84,7 @@ The script installs and configures:
 - **Log retention**: the system journal, which holds Signer's request log, keeps 14 days ([PRIVACY.md](PRIVACY.md)).
 - **The updater** behind the portal's **Settings → Updates** tab, so an owner can install new versions from the browser.
 - Automatic Ubuntu security updates, and swap on small servers so builds don't run out of memory.
-- **DNS through Cloudflare** (1.1.1.1, with Quad9 as fallback) via `systemd-resolved`. Every message from your domains is DMARC-checked, so a flaky resolver defers real mail. The setting lives in `/etc/systemd/resolved.conf.d/signer-dns.conf`, which Linode's Network Helper leaves alone. If DNS doesn't work through Cloudflare, the installer keeps the host's resolvers; `SIGNER_DNS=system` opts out.
+- **DNS through Cloudflare** (1.1.1.1, with Quad9 as fallback) via `systemd-resolved`. Every message from your domains is DMARC-checked, so a flaky resolver defers real mail. The setting lives in `/etc/systemd/resolved.conf.d/signer-dns.conf`. The interface with the default route (eth0) also stops being a DNS default route; otherwise the resolvers DHCP or Network Helper gave it are asked too, and usually answer first. That setting is a systemd-networkd drop-in next to the interface's `.network` file, which Network Helper leaves alone. If DNS doesn't work through Cloudflare, the installer keeps the host's resolvers; `SIGNER_DNS=system` opts out.
 
 Running the same script again also **updates** Signer, and keeps your configuration. See [Updating an existing install](#updating-an-existing-install).
 

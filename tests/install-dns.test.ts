@@ -15,7 +15,7 @@ const fn = (name: string) => {
   return m[0];
 };
 
-function run(opts: { mode?: string; dnsWorks?: boolean; existing?: string }) {
+function run(opts: { mode?: string; dnsWorks?: boolean; existing?: string; linkDropin?: boolean }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "signer-dns-"));
   const dropin = path.join(dir, "resolved.conf.d", "signer-dns.conf");
   if (opts.existing !== undefined) {
@@ -23,20 +23,38 @@ function run(opts: { mode?: string; dnsWorks?: boolean; existing?: string }) {
     fs.writeFileSync(dropin, opts.existing);
   }
   const log = path.join(dir, "calls");
+  const networkd = path.join(dir, "network");
+  fs.mkdirSync(networkd);
+  if (opts.linkDropin) {
+    fs.mkdirSync(path.join(networkd, "05-eth0.network.d"));
+    fs.writeFileSync(path.join(networkd, "05-eth0.network.d", "signer-dns.conf"), "[Network]\nDNSDefaultRoute=no\n");
+  }
   const bash = [
     "set -euo pipefail",
     fn("note"),
     fn("warn"),
     `systemctl() { echo "systemctl $*" >> ${JSON.stringify(log)}; }`,
+    `resolvectl() { echo "resolvectl $*" >> ${JSON.stringify(log)}; }`,
+    // Linode: one interface, eth0, with a default route over IPv4 and IPv6, set up by systemd-networkd.
+    `ip() { case "$*" in *default*) echo "default via 139.177.199.1 dev eth0 proto static" ;; esac; }`,
+    `networkctl() { printf '%s\\n' "       Link File: /usr/lib/systemd/network/99-default.link" "    Network File: /etc/systemd/network/05-eth0.network"; }`,
     `getent() { ${opts.dnsWorks === false ? "return 2" : "return 0"}; }`,
     `DNS_MODE=${JSON.stringify(opts.mode ?? "cloudflare")}`,
     `RESOLVED_DROPIN=${JSON.stringify(dropin)}`,
+    `NETWORKD_DIR=${JSON.stringify(networkd)}`,
+    fn("dns_links"),
+    fn("link_default_route"),
+    fn("remove_link_dropins"),
     fn("configure_dns"),
     "configure_dns"
   ].join("\n");
   const out = execFileSync("bash", ["-c", bash], { encoding: "utf8" });
+  const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "";
+  const linkDropinPath = path.join(networkd, "05-eth0.network.d", "signer-dns.conf");
   return {
     out,
+    defaultRoute: calls.split("\n").filter((l) => l.startsWith("resolvectl default-route")),
+    linkDropin: fs.existsSync(linkDropinPath) ? fs.readFileSync(linkDropinPath, "utf8") : null,
     file: fs.existsSync(dropin) ? fs.readFileSync(dropin, "utf8") : null,
     restarts: (fs.existsSync(log) ? fs.readFileSync(log, "utf8") : "").split("\n").filter((l) => l.includes("restart")).length
   };
@@ -52,21 +70,32 @@ describe("installer DNS step", () => {
     expect(out).toContain("Cloudflare (1.1.1.1, 1.0.0.1)");
   });
 
+  it("stops eth0 being a DNS default route, now and after a reboot, so Linode's resolvers are not asked", () => {
+    const { defaultRoute, linkDropin } = run({});
+    // Once, though eth0 has both an IPv4 and an IPv6 default route.
+    expect(defaultRoute).toEqual(["resolvectl default-route eth0 no"]);
+    expect(linkDropin).toMatch(/^\[Network\]\nDNSDefaultRoute=no$/m);
+  });
+
   it("does not restart the resolver when nothing changed", () => {
     const first = run({}).file!;
     expect(run({ existing: first.replace(/\n$/, "") }).restarts).toBe(0);
   });
 
   it("puts the host's resolvers back when DNS stops working through Cloudflare", () => {
-    const { file, restarts, out } = run({ dnsWorks: false });
+    const { file, restarts, out, defaultRoute, linkDropin } = run({ dnsWorks: false });
     expect(file).toBeNull();
+    expect(linkDropin).toBeNull();
+    expect(defaultRoute).toEqual(["resolvectl default-route eth0 no", "resolvectl default-route eth0 yes"]);
     expect(restarts).toBe(2);
     expect(out).toContain("kept the host's own resolvers");
   });
 
   it("removes its setting with SIGNER_DNS=system", () => {
-    const { file, out } = run({ mode: "system", existing: "[Resolve]\nDNS=1.1.1.1\n" });
+    const { file, out, linkDropin, defaultRoute } = run({ mode: "system", existing: "[Resolve]\nDNS=1.1.1.1\n", linkDropin: true });
     expect(file).toBeNull();
+    expect(linkDropin).toBeNull();
+    expect(defaultRoute).toEqual(["resolvectl default-route eth0 yes"]);
     expect(out).toContain("SIGNER_DNS=system");
   });
 });
