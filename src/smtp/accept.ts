@@ -35,6 +35,36 @@ export const DMARC_RECHECK_MS = 1000;
 const unsure = (o: DmarcOutcome) =>
   [o.result, o.spf, o.dkim].some((r) => TEMPORARY.has(String(r ?? "").toLowerCase()));
 
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Every value of a top-level header, folded lines joined. */
+function headerValues(raw: Buffer, name: string): string[] {
+  const head = headerBlock(raw).toString("latin1").replace(/\r?\n[ \t]+/g, " ");
+  const pattern = new RegExp(`^${name.replace(/-/g, "\\-")}:[ \\t]*(.*)$`, "gim");
+  return [...head.matchAll(pattern)].map((m) => m[1]!.trim());
+}
+
+/**
+ * Exchange sends its automatic mail (out-of-office and rule-based replies,
+ * read receipts) with an empty envelope sender. SPF then has only Exchange's
+ * own HELO name to check, so DMARC cannot pass for the From domain, and
+ * Signer bounced real replies from the organisation's own people.
+ *
+ * Exchange Online stamps the sending tenant on every message that leaves it
+ * (X-MS-Exchange-CrossTenant-Id), and strips those headers from mail that
+ * arrives, so another tenant cannot claim to be this one. Such a message is
+ * accepted when it carries this organisation's tenant, exactly once, and was
+ * sent by an authenticated mailbox (AuthAs: Internal). Mail with an envelope
+ * sender still has to pass DMARC: forwarded and redirected mail has one.
+ */
+export function fromOwnTenant(raw: Buffer, sender: string): boolean {
+  const tenant = config.entra.tenantId.trim().toLowerCase();
+  if (sender || !GUID.test(tenant)) return false;
+  const ids = headerValues(raw, "X-MS-Exchange-CrossTenant-Id");
+  const authAs = headerValues(raw, "X-MS-Exchange-CrossTenant-AuthAs");
+  return ids.length === 1 && ids[0]!.toLowerCase() === tenant && authAs.length === 1 && authAs[0]!.toLowerCase() === "internal";
+}
+
 function clientIp(ip: string): string {
   try {
     return ipaddr.process(ip).toString();
@@ -121,6 +151,7 @@ export async function authorizeInbound(
   const domain = domains[0]!;
   if (!domainNames().includes(domain)) return { domain, listed: false };
   if (config.demoMode) return { domain, listed: true };
+  if (fromOwnTenant(raw, conn.sender)) return { domain, listed: true };
 
   const ip = clientIp(conn.ip);
   const run = async (): Promise<DmarcOutcome> => {

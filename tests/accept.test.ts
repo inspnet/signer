@@ -103,6 +103,59 @@ describe("inbound acceptance", () => {
   });
 });
 
+describe("automatic mail from the organisation's own tenant", () => {
+  const TENANT = "044e81ba-a7f3-4100-a7c1-d689e787b7e6";
+  const OTHER = "9b5650ea-7824-4093-8abe-d0ddbec2a6da";
+  const empty = { ...conn, sender: "" };
+  const dmarcFails = async () => ({ result: "fail", spf: "none", dkim: "none" });
+  /** An out-of-office reply as Exchange Online routes it out, with the headers it stamps. */
+  const reply = (stamps: string[]) =>
+    Buffer.from(
+      [
+        ...stamps,
+        "From: Ada <ada@example.com>",
+        "To: bob@contoso.com",
+        "Subject: Automatic reply: Hi",
+        "Auto-Submitted: auto-replied",
+        "Content-Type: text/plain",
+        "",
+        "I am away."
+      ].join("\r\n")
+    );
+  const stamped = (id = TENANT, authAs = "Internal") => [`X-MS-Exchange-CrossTenant-Id: ${id}`, `X-MS-Exchange-CrossTenant-AuthAs: ${authAs}`];
+
+  beforeEach(() => {
+    config.entra.tenantId = TENANT;
+  });
+  afterEach(() => {
+    config.entra.tenantId = "";
+  });
+
+  it("is accepted with an empty sender, though DMARC cannot pass, without a DNS lookup", async () => {
+    const result = await authorizeInbound(reply(stamped(TENANT.toUpperCase())), empty, async () => {
+      throw new Error("should not check DMARC");
+    });
+    expect(result).toEqual({ domain: "example.com", listed: true });
+  });
+
+  it("is still refused from another tenant, an unauthenticated sender, or a doubled stamp", async () => {
+    for (const stamps of [
+      stamped(OTHER),
+      stamped(TENANT, "Anonymous"),
+      [`X-MS-Exchange-CrossTenant-Id: ${TENANT}`],
+      [...stamped(OTHER), `X-MS-Exchange-CrossTenant-Id: ${TENANT}`]
+    ]) {
+      await expect(authorizeInbound(reply(stamps), empty, dmarcFails)).rejects.toMatchObject({ responseCode: 550 });
+    }
+  });
+
+  it("still has to pass DMARC when it has an envelope sender, or the tenant is not known", async () => {
+    await expect(authorizeInbound(reply(stamped()), conn, dmarcFails)).rejects.toMatchObject({ responseCode: 550 });
+    config.entra.tenantId = "belzbergco.onmicrosoft.com";
+    await expect(authorizeInbound(reply(stamped()), empty, dmarcFails)).rejects.toMatchObject({ responseCode: 550 });
+  });
+});
+
 describe("processed stamp", () => {
   it("seals a message the public header alone cannot impersonate", () => {
     const raw = Buffer.from("From: ada@example.com\r\n\r\nBody");

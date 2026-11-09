@@ -165,6 +165,7 @@ export type AlertConfig = {
   from: string;
   recipients: string[];
   intervalMinutes: number;
+  refusalThreshold: number;
   apiKeySet: boolean;
   configured: boolean;
   last: { at: string; ok: boolean; kind: "problem" | "recovery" | "refusal" | "test"; detail: string } | null;
@@ -290,6 +291,7 @@ export const api = {
     from: string;
     recipients: string;
     intervalMinutes: number;
+    refusalThreshold: number;
   }) => request<AlertConfig>("/api/alerts", { method: "PUT", body: JSON.stringify(body) }),
   testAlert: () => request<{ ok: boolean; detail: string }>("/api/alerts/test", { method: "POST", body: "{}" }),
   deleteDisclaimer: (id: string) => request(`/api/disclaimers/${id}`, { method: "DELETE" }),

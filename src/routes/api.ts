@@ -863,6 +863,7 @@ export function registerApi(app: FastifyInstance): void {
       from?: string;
       recipients?: string[] | string;
       intervalMinutes?: number;
+      refusalThreshold?: number;
     };
     const current = alertSettings();
     const domain = String(body.domain ?? current.domain).trim().toLowerCase();
@@ -882,6 +883,10 @@ export function registerApi(app: FastifyInstance): void {
     if (!Number.isInteger(interval) || interval < 5 || interval > 1440) {
       return reply.code(400).send({ error: "The alert interval must be between 5 and 1440 minutes." });
     }
+    const refusalThreshold = Number(body.refusalThreshold ?? current.refusalThreshold);
+    if (!Number.isInteger(refusalThreshold) || refusalThreshold < 1 || refusalThreshold > 100) {
+      return reply.code(400).send({ error: "The number of refusals before an alert must be between 1 and 100." });
+    }
     // The key is never sent back to the browser; leaving the field empty keeps it.
     const apiKey = typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey.trim() : current.apiKey;
     const next = {
@@ -891,7 +896,8 @@ export function registerApi(app: FastifyInstance): void {
       apiKey,
       from,
       recipients,
-      intervalMinutes: interval
+      intervalMinutes: interval,
+      refusalThreshold
     };
     if (next.enabled && !alertsConfigured(next)) {
       return reply.code(400).send({ error: "Alerts need a Mailgun domain, an API key and at least one recipient." });

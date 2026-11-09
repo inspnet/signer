@@ -25,7 +25,12 @@ export type AlertSettings = {
   from: string;
   recipients: string[];
   intervalMinutes: number;
+  /** Refusals within the interval before a refusal alert goes out. */
+  refusalThreshold: number;
 };
+
+/** One refused message is usually one odd message, not a problem to act on. */
+export const DEFAULT_REFUSAL_THRESHOLD = 3;
 
 export type AlertResult = { at: string; ok: boolean; kind: "problem" | "recovery" | "refusal" | "test"; detail: string };
 
@@ -51,7 +56,8 @@ export function alertSettings(): AlertSettings {
     apiKey: stored.apiKey ?? "",
     from: stored.from ?? "",
     recipients: stored.recipients?.length ? stored.recipients : config.superAdminEmail ? [config.superAdminEmail] : [],
-    intervalMinutes: stored.intervalMinutes && stored.intervalMinutes >= 1 ? stored.intervalMinutes : 15
+    intervalMinutes: stored.intervalMinutes && stored.intervalMinutes >= 1 ? stored.intervalMinutes : 15,
+    refusalThreshold: stored.refusalThreshold && stored.refusalThreshold >= 1 ? stored.refusalThreshold : DEFAULT_REFUSAL_THRESHOLD
   };
 }
 
@@ -131,8 +137,10 @@ export function noteMailOutcome(status: string, detail: string, sender: string):
 /**
  * Refusals are their own alert. A refused message bounced back to one of the
  * organisation's own senders (DMARC failed for a listed domain), which is not
- * an outage that might clear up, so it is reported after a short pause that
- * collects a burst into one email, and then at most once per alert interval.
+ * an outage that might clear up. One now and then is an odd message, and
+ * Activity shows it; an alert goes out only once `refusalThreshold` refusals
+ * fall within the alert interval. It follows a short pause that collects a
+ * burst into one email, and goes out at most once per alert interval.
  */
 const REFUSAL_BATCH_MS = 60_000;
 let refusals: Problem[] = [];
@@ -148,6 +156,9 @@ function noteRefusal(settings: AlertSettings, detail: string, sender: string): v
   });
   if (refusals.length > MAX_PENDING) refusals.shift();
   if (refusalTimer) return;
+  const since = Date.now() - settings.intervalMinutes * 60_000;
+  refusals = refusals.filter((r) => Date.parse(r.at) >= since);
+  if (refusals.length < settings.refusalThreshold) return;
   const wait = Math.max(REFUSAL_BATCH_MS, lastRefusalAlertAt + settings.intervalMinutes * 60_000 - Date.now());
   refusalTimer = setTimeout(() => {
     refusalTimer = null;
@@ -187,12 +198,13 @@ function refusalMessage(batch: Problem[], settings: AlertSettings): { subject: s
         .map((r) => `- ${r.count}× (from ${[...r.domains].join(", ")}): ${r.detail}`),
       "",
       "A DMARC failure for one of your own domains usually means the message was not DKIM-signed and its envelope " +
-        "sender is not aligned (out-of-office replies and read receipts have an empty one), or the domain's SPF does not " +
-        "include Microsoft 365 or Google.",
+        "sender is not aligned, or the domain's SPF does not include Microsoft 365 or Google. Automatic mail with an empty " +
+        "sender (out-of-office replies, read receipts) is accepted when it carries your Microsoft 365 tenant ID, so check " +
+        "ENTRA_TENANT_ID is the tenant's ID if those are refused.",
       "",
       `Activity: ${link("/analytics")}`,
       "",
-      `Refusals are reported at most once every ${settings.intervalMinutes} minutes.`
+      `Refusals are reported when ${settings.refusalThreshold === 1 ? "one happens" : `${settings.refusalThreshold} happen within ${settings.intervalMinutes} minutes`}, at most once every ${settings.intervalMinutes} minutes.`
     ].join("\n")
   };
 }

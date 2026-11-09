@@ -1238,7 +1238,8 @@ function Alerts() {
     apiKey: "",
     from: "",
     recipients: "",
-    intervalMinutes: 15
+    intervalMinutes: 15,
+    refusalThreshold: 3
   });
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1251,7 +1252,8 @@ function Alerts() {
       apiKey: "",
       from: c.from,
       recipients: c.recipients.join(", "),
-      intervalMinutes: c.intervalMinutes
+      intervalMinutes: c.intervalMinutes,
+      refusalThreshold: c.refusalThreshold
     });
   };
   useEffect(() => {
@@ -1355,6 +1357,23 @@ function Alerts() {
             </select>
           </label>
         </div>
+        <label className="block">
+          Refused messages
+          <select
+            className="input mt-1"
+            value={form.refusalThreshold}
+            onChange={(e) => setForm({ ...form, refusalThreshold: Number(e.target.value) })}
+          >
+            {[...new Set([1, 2, 3, 5, 10, form.refusalThreshold])].sort((a, b) => a - b).map((n) => (
+              <option key={n} value={n}>
+                {n === 1 ? "Alert on every refusal" : `Alert when ${n} are refused within the interval`}
+              </option>
+            ))}
+          </select>
+          <span className="block mt-1 text-xs text-slate-500">
+            A refused message bounces back to its sender. One now and then is usually an odd message, and shows in Activity.
+          </span>
+        </label>
         <div className="flex flex-wrap items-center gap-2">
           <button className="btn btn-primary" disabled={busy}>
             Save
