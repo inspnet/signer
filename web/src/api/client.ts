@@ -158,6 +158,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export type Disclaimer = { id: string; name: string; enabled: number; priority: number; html: string; style?: DisclaimerStyle; rules: RuleSet };
 
+export type MailTenant = { id: string; source: "settings" | "entra" | "lookup" | "none"; entraTenantId: string };
+
 export type AlertConfig = {
   enabled: boolean;
   domain: string;
@@ -334,7 +336,9 @@ export const api = {
       suggestions: Array<{ domain: string; people: number }>;
       perDomainMx: boolean;
       upstreamHost: string;
+      tenant: MailTenant;
     }>("/api/domains"),
+  saveTenant: (value: string) => request<MailTenant>("/api/tenant", { method: "PUT", body: JSON.stringify({ value }) }),
   setDomainReturnHost: (name: string, host: string) =>
     request<{ ok: boolean; route: ReturnRoute }>(`/api/domains/${encodeURIComponent(name)}/return-host`, {
       method: "PUT",

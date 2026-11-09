@@ -65,6 +65,7 @@ import {
   saveSentItemsSettings,
   sentItemsSettings
 } from "../mail/sentitems.js";
+import { mailTenant, saveMailTenant } from "../smtp/tenant.js";
 import { alertSettings, alertsConfigured, lastAlert, saveAlertSettings, sendTestAlert } from "../alerts/index.js";
 import {
   checkForUpdates,
@@ -514,8 +515,23 @@ export function registerApi(app: FastifyInstance): void {
       domains: domains.map((d, i) => ({ ...d, route: routes[i] })),
       suggestions,
       perDomainMx: perDomainMx(),
-      upstreamHost: config.upstream.host
+      upstreamHost: config.upstream.host,
+      tenant: mailTenant()
     };
+  });
+
+  // The Microsoft 365 tenant ID that marks automatic mail (empty sender) as your own.
+  app.put("/api/tenant", async (req, reply) => {
+    const admin = requireRole(["admin"], req, reply);
+    if (!admin) return;
+    const value = String((req.body as { value?: unknown } | null)?.value ?? "");
+    try {
+      const tenant = await saveMailTenant(value);
+      audit(admin.email, "update_tenant_id", "", tenant.id || "cleared");
+      return tenant;
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // Names only, for the rule editors: anyone who edits signatures or disclaimers can target a domain.

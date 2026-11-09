@@ -199,8 +199,8 @@ function refusalMessage(batch: Problem[], settings: AlertSettings): { subject: s
       "",
       "A DMARC failure for one of your own domains usually means the message was not DKIM-signed and its envelope " +
         "sender is not aligned, or the domain's SPF does not include Microsoft 365 or Google. Automatic mail with an empty " +
-        "sender (out-of-office replies, read receipts) is accepted when it carries your Microsoft 365 tenant ID, so check " +
-        "ENTRA_TENANT_ID is the tenant's ID if those are refused.",
+        "sender (out-of-office replies, read receipts) is accepted when it carries your Microsoft 365 tenant ID: if those are " +
+        "refused, check it under Settings → Domains → Microsoft 365 tenant.",
       "",
       `Activity: ${link("/analytics")}`,
       "",
