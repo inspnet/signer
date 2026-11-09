@@ -4,6 +4,7 @@ import ipaddr from "ipaddr.js";
 import { config } from "../config.js";
 import { domainNames } from "../db/index.js";
 import { headerBlock } from "../mail/mime.js";
+import { mailTenant } from "./tenant.js";
 
 export class InboundRefusal extends Error {
   readonly responseCode: number;
@@ -35,8 +36,6 @@ export const DMARC_RECHECK_MS = 1000;
 const unsure = (o: DmarcOutcome) =>
   [o.result, o.spf, o.dkim].some((r) => TEMPORARY.has(String(r ?? "").toLowerCase()));
 
-const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /** Every value of a top-level header, folded lines joined. */
 function headerValues(raw: Buffer, name: string): string[] {
   const head = headerBlock(raw).toString("latin1").replace(/\r?\n[ \t]+/g, " ");
@@ -54,12 +53,13 @@ function headerValues(raw: Buffer, name: string): string[] {
  * (X-MS-Exchange-CrossTenant-Id), and strips those headers from mail that
  * arrives, so another tenant cannot claim to be this one. Such a message is
  * accepted when it carries this organisation's tenant, exactly once, and was
- * sent by an authenticated mailbox (AuthAs: Internal). Mail with an envelope
+ * sent by an authenticated mailbox (AuthAs: Internal). The tenant ID comes
+ * from tenant.ts: set under Settings → Domains, or from ENTRA_TENANT_ID. Mail with an envelope
  * sender still has to pass DMARC: forwarded and redirected mail has one.
  */
 export function fromOwnTenant(raw: Buffer, sender: string): boolean {
-  const tenant = config.entra.tenantId.trim().toLowerCase();
-  if (sender || !GUID.test(tenant)) return false;
+  const tenant = mailTenant().id;
+  if (sender || !tenant) return false;
   const ids = headerValues(raw, "X-MS-Exchange-CrossTenant-Id");
   const authAs = headerValues(raw, "X-MS-Exchange-CrossTenant-AuthAs");
   return ids.length === 1 && ids[0]!.toLowerCase() === tenant && authAs.length === 1 && authAs[0]!.toLowerCase() === "internal";

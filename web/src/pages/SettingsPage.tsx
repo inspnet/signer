@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
-import { api, type AlertConfig, type SentItemsConfig, type DirectoryPerson, type LinkSuggestion, type RelayDiagnosis, type UpdateCheck, type UpdateStatus } from "../api/client";
+import { api, type AlertConfig, type MailTenant, type SentItemsConfig, type DirectoryPerson, type LinkSuggestion, type RelayDiagnosis, type UpdateCheck, type UpdateStatus } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
 import { useAuth } from "../layouts/Auth";
 
@@ -896,6 +896,7 @@ function Domains() {
           ))}
           {!data.domains.length && <li className="p-3 text-sm text-slate-500">No domains yet: every sender is signed until you add one.</li>}
         </ul>
+        <TenantPanel tenant={data.tenant} onSaved={() => void load()} />
         {data.suggestions.length > 0 && (
           <div>
             <h3 className="font-medium text-sm">Found in the directory</h3>
@@ -916,6 +917,75 @@ function Domains() {
         )}
       </div>
     </div>
+  );
+}
+
+const TENANT_SOURCE: Record<MailTenant["source"], string> = {
+  settings: "set here",
+  entra: "from ENTRA_TENANT_ID",
+  lookup: "looked up from ENTRA_TENANT_ID",
+  none: ""
+};
+
+function TenantPanel({ tenant, onSaved }: { tenant: MailTenant; onSaved: () => void }) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const save = async (next: string) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const saved = await api.saveTenant(next);
+      setValue("");
+      setMessage({ ok: true, text: saved.id ? `Saved: ${saved.id}` : "Cleared." });
+      onSaved();
+    } catch (err) {
+      setMessage({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="panel p-4 space-y-3 text-sm">
+      <h3 className="font-medium">Microsoft 365 tenant</h3>
+      <p>
+        {tenant.id ? (
+          <>
+            Tenant ID <code>{tenant.id}</code> <span className="text-slate-500">({TENANT_SOURCE[tenant.source]})</span>
+          </>
+        ) : (
+          <span className="text-amber-700">Not known yet. Out-of-office replies and read receipts from your people are refused until it is set.</span>
+        )}
+      </p>
+      <p className="text-xs text-slate-500 leading-5">
+        Out-of-office replies and read receipts have no sender address, so they cannot pass DMARC. Signer accepts them when Exchange
+        marks them as sent from a mailbox in this tenant. Find the ID in Entra admin center → Overview (Tenant ID), or enter one of
+        your domains to look it up. Sign-in keeps using ENTRA_TENANT_ID.
+      </p>
+      <form
+        className="flex flex-wrap gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save(value);
+        }}
+      >
+        <input
+          className="input flex-1 min-w-0 font-mono"
+          placeholder="00000000-0000-0000-0000-000000000000 or contoso.com"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <button className="btn btn-primary" disabled={busy || !value.trim()}>
+          Save
+        </button>
+        {tenant.source === "settings" && (
+          <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void save("")}>
+            Use ENTRA_TENANT_ID
+          </button>
+        )}
+      </form>
+      {message && <p className={message.ok ? "text-emerald-700" : "text-red-700"}>{message.text}</p>}
+    </section>
   );
 }
 

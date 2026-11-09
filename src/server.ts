@@ -12,6 +12,7 @@ import { initDb, purgeExpiredLogs } from "./db/index.js";
 import { authPlugin, registerAuthRoutes } from "./auth/index.js";
 import { registerApi } from "./routes/api.js";
 import { startSmtp } from "./smtp/server.js";
+import { resolveEntraTenant } from "./smtp/tenant.js";
 import { syncDirectory } from "./directory/sync.js";
 import { uploadHeaders } from "./util/uploads.js";
 
@@ -28,6 +29,7 @@ function reportConfig(): void {
 async function main(): Promise<void> {
   reportConfig();
   initDb();
+  void resolveEntraTenant();
   const app = Fastify({ logger: true, trustProxy: config.trustProxy });
   app.addHook("onRequest", async (_req, reply) => {
     reply.header("X-Content-Type-Options", "nosniff");
