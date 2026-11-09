@@ -86,6 +86,7 @@ const configure = (over: Partial<Parameters<typeof alerts.saveAlertSettings>[0]>
     from: "",
     recipients: ["it-admin@inspired.co", "ops@inspired.co"],
     intervalMinutes: 15,
+    refusalThreshold: 3,
     ...over
   });
 
@@ -111,6 +112,7 @@ describe("Settings → Alerts API", () => {
     expect((await call("PUT", "/api/alerts", { recipients: "not-an-address" })).statusCode).toBe(400);
     expect((await call("PUT", "/api/alerts", { domain: "not a domain" })).statusCode).toBe(400);
     expect((await call("PUT", "/api/alerts", { intervalMinutes: 1 })).statusCode).toBe(400);
+    expect((await call("PUT", "/api/alerts", { refusalThreshold: 0 })).statusCode).toBe(400);
     configure({ apiKey: "", enabled: false });
     expect((await call("PUT", "/api/alerts", { enabled: true })).json().error).toMatch(/need a Mailgun domain, an API key/);
   });
@@ -224,9 +226,30 @@ describe("alerting when mail is not sending", () => {
 describe("alerting when Signer refuses a message", () => {
   const dmarcFail = "DMARC did not pass for inspired.co (spf=fail, dkim=none)";
 
-  it("alerts about a minute after the first refusal, gathering the others in that minute", async () => {
+  it("stays quiet for one or two refusals, and alerts on the third within the interval", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     configure();
+    alerts.noteMailOutcome("rejected", dmarcFail, "scott@inspired.co");
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    alerts.noteMailOutcome("rejected", dmarcFail, "ada@inspired.co");
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(sent).toHaveLength(0);
+
+    // The first has dropped out of the 15-minute window, so this is two, not three.
+    alerts.noteMailOutcome("rejected", dmarcFail, "bob@inspired.co");
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(sent).toHaveLength(0);
+
+    alerts.noteMailOutcome("rejected", dmarcFail, "eve@inspired.co");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.form.get("subject")).toBe("Signer: refused 3 messages on signer.inspired.co");
+    expect(sent[0]!.form.get("text")).toContain("when 3 happen within 15 minutes");
+  });
+
+  it("alerts about a minute after the first refusal, gathering the others in that minute", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    configure({ refusalThreshold: 1 });
     alerts.noteMailOutcome("rejected", dmarcFail, "scott@inspired.co");
     await vi.advanceTimersByTimeAsync(30_000);
     alerts.noteMailOutcome("rejected", dmarcFail, "ada@inspired.co");
@@ -244,7 +267,7 @@ describe("alerting when Signer refuses a message", () => {
 
   it("sends at most one refusal alert per interval, and does not start the outage alert", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    configure();
+    configure({ refusalThreshold: 1 });
     alerts.noteMailOutcome("rejected", dmarcFail, "scott@inspired.co");
     await vi.advanceTimersByTimeAsync(60_000);
     expect(sent).toHaveLength(1);
