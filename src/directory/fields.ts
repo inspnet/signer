@@ -68,6 +68,8 @@ export type DirectoryUser = {
   enabled: number;
   /** Set on a secondary mailbox (a shared mailbox for another company, say): the person whose details it signs with. */
   primaryUserId?: string;
+  /** Fields this person chose to leave out of their signature (Settings → Field locks decides which they may). */
+  hiddenFields?: string[];
   groupIds: string[];
 };
 

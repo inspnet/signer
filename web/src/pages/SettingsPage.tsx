@@ -502,6 +502,13 @@ function PersonEditor(props: {
         }}
       >
         <h3 className="font-medium">Signature details</h3>
+        {(() => {
+          const hideable = new Set(fields.filter((f) => f.userHideable).map((f) => f.key));
+          const hidden = fields.filter((f) => hideable.has(f.key) && person.hiddenFields?.includes(f.key)).map((f) => f.label);
+          return hidden.length ? (
+            <p className="text-xs text-slate-500">They leave {hidden.join(", ")} out of their signature (My Details).</p>
+          ) : null;
+        })()}
         {editable.map((f) => (
           <label key={f.key} className="block">
             <span className="text-slate-600">
@@ -608,34 +615,61 @@ function MailboxLink(props: {
 
 function Fields() {
   const [fields, setFields] = useState<Awaited<ReturnType<typeof api.fields>>>([]);
+  const [saved, setSaved] = useState("");
   useEffect(() => {
     void api.fields().then(setFields);
   }, []);
   return (
     <div className="mt-6 panel p-5">
-      <p className="text-sm text-slate-600 mb-4">Users may edit only the fields you enable. Directory-sourced values remain the default until overridden.</p>
+      <p className="text-sm text-slate-600 mb-4">
+        <strong className="text-ink">Edit:</strong> people may change the field under My Details. Directory-sourced values remain the
+        default until overridden. <strong className="text-ink">Hide:</strong> people may leave the field out of their own signature, and
+        it is left out as if it were empty. Turning Hide off shows the field again for everyone.
+      </p>
       <div className="grid gap-x-10 sm:grid-cols-2 xl:grid-cols-3">
         {fields.map((f) => (
-          <label key={f.key} className="flex items-center justify-between gap-3 py-1.5 text-sm border-b border-line">
-            <span>
+          <div key={f.key} className="flex items-center justify-between gap-3 py-1.5 text-sm border-b border-line">
+            <span className="min-w-0">
               {f.label} {f.directory && <span className="text-slate-400">(directory)</span>}
             </span>
-            <input
-              type="checkbox"
-              checked={f.userEditable}
-              onChange={(e) => setFields(fields.map((x) => (x.key === f.key ? { ...x, userEditable: e.target.checked } : x)))}
-            />
-          </label>
+            <span className="flex shrink-0 gap-3 text-xs text-slate-500">
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={f.userEditable}
+                  onChange={(e) => setFields(fields.map((x) => (x.key === f.key ? { ...x, userEditable: e.target.checked } : x)))}
+                />
+                Edit
+              </label>
+              <label className={`flex items-center gap-1 ${f.key === "email" ? "invisible" : ""}`}>
+                <input
+                  type="checkbox"
+                  disabled={f.key === "email"}
+                  checked={f.userHideable}
+                  onChange={(e) => setFields(fields.map((x) => (x.key === f.key ? { ...x, userHideable: e.target.checked } : x)))}
+                />
+                Hide
+              </label>
+            </span>
+          </div>
         ))}
       </div>
-      <button
-        className="mt-4 btn btn-primary"
-        onClick={async () => {
-          await api.saveFields(fields.filter((f) => f.userEditable).map((f) => f.key));
-        }}
-      >
-        Save field permissions
-      </button>
+      <div className="mt-4 flex items-center gap-3">
+        <button
+          className="btn btn-primary"
+          onClick={async () => {
+            setSaved("");
+            await api.saveFields(
+              fields.filter((f) => f.userEditable).map((f) => f.key),
+              fields.filter((f) => f.userHideable).map((f) => f.key)
+            );
+            setSaved("Saved.");
+          }}
+        >
+          Save field permissions
+        </button>
+        {saved && <span className="text-sm text-emerald-700">{saved}</span>}
+      </div>
     </div>
   );
 }

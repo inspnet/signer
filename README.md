@@ -471,6 +471,7 @@ docker compose logs -f --tail=80
 - **Campaigns** — banner images with the same rule engine
 - **Rule Tester** — dry-run with per-rule pass/fail, plus **Send test**, which emails the result to your own mailbox
 - **User details** — employees edit only admin-unlocked fields
+- **Hide a field** — under **Settings → Field locks**, tick **Hide** on a field to let people leave it out of their own signature (untick **Show in my signature** under My Details). It's left out as if empty, the value stays, and a linked mailbox follows its person's choice. Unticking **Hide** shows the field again for everyone. Email can't be hidden.
 - **RBAC** — owner / admin / editor / designer / user. Admins manage roles, but only `SUPER_ADMIN_EMAIL` can grant `owner`
 - **Uploads** — PNG, JPEG, GIF and WEBP artwork, validated by file contents rather than extension
 - **Directory** — everyone synced from Entra or Google, searchable. Admins fill in the fields the directory does not supply; directory fields stay read-only so Entra/Google remain the source of truth. Syncs hourly

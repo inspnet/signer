@@ -31,6 +31,8 @@ import {
   setFieldPermissions,
   setSetting,
   setUserOverrides,
+  setUserHiddenFields,
+  NEVER_HIDDEN,
   UnsupportedUploadError,
   defaultRules,
   addDomain,
@@ -104,6 +106,14 @@ function smtpAllowlistStatus(): {
     ignored: status?.invalid ?? [],
     openToAll: !(status?.cidrs.length ?? 0)
   };
+}
+
+/** Every directory field, with what people may do with it under Settings → Field locks. */
+function withPermissions(perms: ReturnType<typeof listFieldPermissions>) {
+  return DIRECTORY_FIELDS.map((f) => {
+    const p = perms.find((x) => x.fieldKey === f.key);
+    return { ...f, userEditable: p?.userEditable ?? false, userHideable: !NEVER_HIDDEN.has(f.key) && (p?.userHideable ?? false) };
+  });
 }
 
 export function registerApi(app: FastifyInstance): void {
@@ -402,17 +412,15 @@ export function registerApi(app: FastifyInstance): void {
   app.get("/api/fields", async (req, reply) => {
     if (!requireStaff(req, reply)) return;
     const perms = listFieldPermissions();
-    return DIRECTORY_FIELDS.map((f) => ({
-      ...f,
-      userEditable: perms.find((p) => p.fieldKey === f.key)?.userEditable ?? false
-    }));
+    return withPermissions(perms);
   });
 
   app.put("/api/fields", async (req, reply) => {
     const user = requireRole(["admin"], req, reply);
     if (!user) return;
-    const body = req.body as { editable: string[] };
-    setFieldPermissions(body.editable || []);
+    const body = (req.body ?? {}) as { editable?: unknown; hideable?: unknown };
+    const keys = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+    setFieldPermissions(keys(body.editable), Array.isArray(body.hideable) ? keys(body.hideable) : undefined);
     audit(user.email, "update_field_permissions");
     return listFieldPermissions();
   });
@@ -422,25 +430,21 @@ export function registerApi(app: FastifyInstance): void {
     if (!session) return;
     const user = getUserByEmail(session.email);
     const perms = listFieldPermissions();
-    return {
-      user,
-      fields: DIRECTORY_FIELDS.map((f) => ({
-        ...f,
-        userEditable: perms.find((p) => p.fieldKey === f.key)?.userEditable ?? false
-      }))
-    };
+    return { user, fields: withPermissions(perms), hiddenFields: user?.hiddenFields ?? [] };
   });
 
   app.put("/api/me/details", async (req, reply) => {
     const session = requireUser(req, reply);
     if (!session) return;
     const allowed = new Set(listFieldPermissions().filter((p) => p.userEditable).map((p) => p.fieldKey));
-    const body = req.body as Record<string, string>;
+    const body = (req.body ?? {}) as Record<string, unknown>;
     const overrides: Record<string, string> = {};
     for (const [key, value] of Object.entries(body)) {
       if (allowed.has(key) && typeof value === "string") overrides[key] = value.slice(0, 255);
     }
     setUserOverrides(session.email, overrides);
+    // Which fields to leave out of their signature; only those field locks let them hide are kept.
+    if (Array.isArray(body.hiddenFields)) setUserHiddenFields(session.email, body.hiddenFields.map(String));
     audit(session.email, "update_my_details");
     return getUserByEmail(session.email);
   });
