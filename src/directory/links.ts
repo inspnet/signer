@@ -1,4 +1,4 @@
-import { getUserByEmail, getUserById, listUsers, setPrimaryUserId } from "../db/index.js";
+import { getUserByEmail, getUserById, listFieldPermissions, listUsers, NEVER_HIDDEN, setPrimaryUserId } from "../db/index.js";
 import type { DirectoryUser } from "./fields.js";
 
 /**
@@ -31,12 +31,28 @@ export function asLinked(mailbox: DirectoryUser, person: DirectoryUser): Directo
   };
 }
 
+/**
+ * The fields a person chose to hide come out blank, so a signature leaves
+ * them out as it does any empty field. Only fields Settings → Field locks
+ * still lets people hide count: taking that away shows them again.
+ */
+export function withoutHiddenFields(user: DirectoryUser): DirectoryUser {
+  if (!user.hiddenFields?.length) return user;
+  const hideable = new Set(listFieldPermissions().filter((p) => p.userHideable).map((p) => p.fieldKey));
+  const out = { ...user } as unknown as Record<string, unknown>;
+  for (const key of user.hiddenFields) {
+    if (hideable.has(key) && !NEVER_HIDDEN.has(key) && typeof out[key] === "string") out[key] = "";
+  }
+  return out as unknown as DirectoryUser;
+}
+
 /** The details a message from this address is signed with, or null when the address is not in the directory. */
 export function senderProfile(email: string): DirectoryUser | null {
   const mailbox = getUserByEmail(email);
-  if (!mailbox?.primaryUserId) return mailbox;
+  if (!mailbox?.primaryUserId) return mailbox && withoutHiddenFields(mailbox);
   const person = getUserById(mailbox.primaryUserId);
-  return person ? asLinked(mailbox, person) : mailbox;
+  // A linked mailbox signs with its person's details, so their choices apply to it too.
+  return withoutHiddenFields(person ? asLinked(mailbox, person) : mailbox);
 }
 
 /** Link the mailbox at `email` to the person at `primaryEmail`, or unlink it when that is empty. */

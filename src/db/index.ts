@@ -332,6 +332,14 @@ function migrate(d: Database.Database): void {
   if (!userColumns.includes("primary_user_id")) {
     d.exec("ALTER TABLE users ADD COLUMN primary_user_id TEXT NOT NULL DEFAULT ''");
   }
+  // Fields a person chose to leave out of their signature, where field locks let them.
+  if (!userColumns.includes("hidden_fields_json")) {
+    d.exec("ALTER TABLE users ADD COLUMN hidden_fields_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  const permissionColumns = (d.prepare("PRAGMA table_info(field_permissions)").all() as { name: string }[]).map((c) => c.name);
+  if (!permissionColumns.includes("user_hideable")) {
+    d.exec("ALTER TABLE field_permissions ADD COLUMN user_hideable INTEGER NOT NULL DEFAULT 0");
+  }
 
   const existingFields = new Set(
     (d.prepare("SELECT field_key FROM field_permissions").all() as { field_key: string }[]).map((r) => r.field_key)
@@ -496,7 +504,8 @@ const USER_COLUMNS = `id, email, display_name as displayName, given_name as give
   city, state, postal_code as postalCode, country, telephone, mobile, fax, website,
   pronouns, working_hours as workingHours, photo_url as photoUrl, linkedin, x, facebook,
   instagram, custom1, custom2, custom3, custom4, custom5, source, directory_id as directoryId,
-  domain, enabled, overrides_json as overridesJson, primary_user_id as primaryUserId`;
+  domain, enabled, overrides_json as overridesJson, primary_user_id as primaryUserId,
+  hidden_fields_json as hiddenFieldsJson`;
 
 function hydrateUser(row: Record<string, unknown> | undefined): DirectoryUser | null {
   if (!row) return null;
@@ -538,6 +547,7 @@ function hydrateUser(row: Record<string, unknown> | undefined): DirectoryUser | 
     domain: String(row.domain || ""),
     enabled: Number(row.enabled ?? 1),
     primaryUserId: String(row.primaryUserId || ""),
+    hiddenFields: parseJson<unknown[]>(String(row.hiddenFieldsJson || "[]"), []).filter((k): k is string => typeof k === "string"),
     groupIds: []
   };
   for (const [k, v] of Object.entries(overrides)) {
@@ -591,8 +601,8 @@ export function upsertDirectoryUser(user: DirectoryUser, preserveOverrides = tru
     // row over instead of failing the whole sync, and keep what the person
     // saved under My Details.
     const sameEmail = d
-      .prepare("SELECT id, overrides_json, primary_user_id FROM users WHERE email = ? AND id != ?")
-      .get(user.email, user.id) as { id: string; overrides_json: string; primary_user_id: string } | undefined;
+      .prepare("SELECT id, overrides_json, primary_user_id, hidden_fields_json FROM users WHERE email = ? AND id != ?")
+      .get(user.email, user.id) as { id: string; overrides_json: string; primary_user_id: string; hidden_fields_json: string } | undefined;
     if (sameEmail) {
       if (preserveOverrides && !existing) overrides = sameEmail.overrides_json;
       d.prepare("DELETE FROM group_members WHERE user_id = ?").run(sameEmail.id);
@@ -602,6 +612,9 @@ export function upsertDirectoryUser(user: DirectoryUser, preserveOverrides = tru
     if (sameEmail) {
       // Keep mailbox links: this row's own, and those of mailboxes linked to it.
       if (sameEmail.primary_user_id && !existing) setPrimaryUserId(user.id, sameEmail.primary_user_id);
+      if (preserveOverrides && !existing) {
+        d.prepare("UPDATE users SET hidden_fields_json = ? WHERE id = ?").run(sameEmail.hidden_fields_json || "[]", user.id);
+      }
       d.prepare("UPDATE users SET primary_user_id = ? WHERE primary_user_id = ?").run(user.id, sameEmail.id);
     }
   })();
@@ -648,23 +661,44 @@ export function setUserOverrides(email: string, overrides: Record<string, string
   getDb().prepare("UPDATE users SET overrides_json = ? WHERE id = ?").run(JSON.stringify(merged), user.id);
 }
 
-export function listFieldPermissions(): { fieldKey: string; userEditable: boolean }[] {
+export function listFieldPermissions(): { fieldKey: string; userEditable: boolean; userHideable: boolean }[] {
   return (
-    getDb().prepare("SELECT field_key as fieldKey, user_editable as userEditable FROM field_permissions").all() as {
+    getDb()
+      .prepare("SELECT field_key as fieldKey, user_editable as userEditable, user_hideable as userHideable FROM field_permissions")
+      .all() as {
       fieldKey: string;
       userEditable: number;
+      userHideable: number;
     }[]
-  ).map((r) => ({ fieldKey: r.fieldKey, userEditable: Boolean(r.userEditable) }));
+  ).map((r) => ({ fieldKey: r.fieldKey, userEditable: Boolean(r.userEditable), userHideable: Boolean(r.userHideable) }));
 }
 
-export function setFieldPermissions(keys: string[]): void {
+/** Email is how the mailbox is identified, so it is never hidden. */
+export const NEVER_HIDDEN = new Set(["email"]);
+
+/** Which fields people may edit, and (when given) which they may leave out of their signature. */
+export function setFieldPermissions(editable: string[], hideable?: string[]): void {
   const d = getDb();
   const tx = d.transaction(() => {
     d.prepare("UPDATE field_permissions SET user_editable = 0").run();
     const upd = d.prepare("UPDATE field_permissions SET user_editable = 1 WHERE field_key = ?");
-    for (const key of keys) upd.run(key);
+    for (const key of editable) upd.run(key);
+    if (hideable) {
+      d.prepare("UPDATE field_permissions SET user_hideable = 0").run();
+      const hide = d.prepare("UPDATE field_permissions SET user_hideable = 1 WHERE field_key = ?");
+      for (const key of hideable) if (!NEVER_HIDDEN.has(key)) hide.run(key);
+    }
   });
   tx();
+}
+
+/** The fields this person leaves out of their signature. Only fields they may hide are kept. */
+export function setUserHiddenFields(email: string, keys: string[]): void {
+  const user = getUserByEmail(email);
+  if (!user) return;
+  const allowed = new Set(listFieldPermissions().filter((p) => p.userHideable).map((p) => p.fieldKey));
+  const kept = [...new Set(keys)].filter((k) => allowed.has(k) && !NEVER_HIDDEN.has(k));
+  getDb().prepare("UPDATE users SET hidden_fields_json = ? WHERE id = ?").run(JSON.stringify(kept), user.id);
 }
 
 export function resolveRole(email: string): Role {

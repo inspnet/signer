@@ -16,6 +16,8 @@ export type DirectoryPerson = {
   enabled?: number;
   /** On a secondary mailbox: the id of the person whose details it signs with. */
   primaryUserId?: string;
+  /** Fields this person leaves out of their signature. */
+  hiddenFields?: string[];
   groupIds: string[];
   [key: string]: string | string[] | number | undefined;
 };
@@ -316,14 +318,17 @@ export const api = {
   users: () => request<DirectoryPerson[]>("/api/users"),
   groups: () => request<Array<{ id: string; name: string; email: string }>>("/api/groups"),
   sync: () => request("/api/directory/sync", { method: "POST", body: "{}" }),
-  fields: () => request<Array<{ key: string; label: string; section: string; directory: boolean; userEditable: boolean }>>("/api/fields"),
-  saveFields: (editable: string[]) => request("/api/fields", { method: "PUT", body: JSON.stringify({ editable }) }),
+  fields: () =>
+    request<Array<{ key: string; label: string; section: string; directory: boolean; userEditable: boolean; userHideable: boolean }>>("/api/fields"),
+  saveFields: (editable: string[], hideable: string[]) => request("/api/fields", { method: "PUT", body: JSON.stringify({ editable, hideable }) }),
   myDetails: () =>
     request<{
       user: Record<string, string> | null;
-      fields: Array<{ key: string; label: string; section: string; userEditable: boolean }>;
+      fields: Array<{ key: string; label: string; section: string; userEditable: boolean; userHideable: boolean }>;
+      hiddenFields: string[];
     }>("/api/me/details"),
-  saveMyDetails: (body: Record<string, string>) => request("/api/me/details", { method: "PUT", body: JSON.stringify(body) }),
+  saveMyDetails: (body: Record<string, string>, hiddenFields: string[]) =>
+    request("/api/me/details", { method: "PUT", body: JSON.stringify({ ...body, hiddenFields }) }),
   admins: () => request<{ superAdmin: string; roles: Array<{ email: string; role: string }> }>("/api/admins"),
   saveAdmin: (email: string, role: string) => request("/api/admins", { method: "PUT", body: JSON.stringify({ email, role }) }),
   removeAdmin: (email: string) => request(`/api/admins/${encodeURIComponent(email)}`, { method: "DELETE" }),
